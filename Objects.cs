@@ -1,9 +1,10 @@
 ﻿using System;
 using System.IO;
+using System.Runtime.InteropServices;
 
 namespace PakReader
 {
-    internal unsafe struct FPakInfo
+    internal struct FPakInfo
     {
         public const int PAK_FILE_MAGIC = 0x5A6F12E1;
         public const int MAX_PACKAGE_PATH = 512;
@@ -17,7 +18,7 @@ namespace PakReader
         public byte bEncryptedIndex;
         public FGuid EncryptionKeyGuid;
 
-        public static int Size = sizeof(int) * 2 + sizeof(long) * 2 + 20 + 1 + sizeof(FGuid) + (32 * 5);
+        public static readonly int Size = sizeof(int) * 2 + sizeof(long) * 2 + 20 + 1 + Marshal.SizeOf<FGuid>() + (32 * 5);
 
         public FPakInfo(BinaryReader reader)
         {
@@ -288,6 +289,25 @@ namespace PakReader
             C = reader.ReadUInt32();
             D = reader.ReadUInt32();
         }
+
+        public override bool Equals(object obj) => obj is FGuid ? this == (FGuid)obj : false;
+
+        public override int GetHashCode()
+        {
+            return (int)(((long)A + B + C + D) % uint.MaxValue - int.MaxValue);
+        }
+
+        public static bool operator ==(FGuid a, FGuid b) =>
+            a.A == b.A &&
+            a.B == b.B &&
+            a.C == b.C &&
+            a.D == b.D;
+
+        public static bool operator !=(FGuid a, FGuid b) =>
+            a.A != b.A ||
+            a.B != b.B ||
+            a.C != b.C ||
+            a.D != b.D;
     }
 
     internal struct FString
@@ -297,6 +317,11 @@ namespace PakReader
         public FString(string str)
         {
             this.str = str;
+        }
+
+        public FString(BinaryReader reader)
+        {
+            str = AssetReader.read_string(reader);
         }
     }
 
@@ -460,18 +485,20 @@ namespace PakReader
         int HeadersSize;      // used by UE3 for precaching name table
         string PackageGroup;       // "None" or directory name
         int DependsOffset;        // number of items = ExportCount
+        /*
         int f38;
         int f3C;
         int f40;
         int EngineVersion;
         int CookerVersion;
+        */
         int CompressionFlags;
         FCompressedChunk[] CompressedChunks;
-        int U3unk60;
+        // int U3unk60;
 
         long BulkDataStartOffset;
 
-        bool ReverseBytes;
+        // bool ReverseBytes;
         int Version;
 
         static readonly int[] legacyVerToEngineVer =
@@ -511,7 +538,7 @@ namespace PakReader
             // support reverse byte order
             if (Tag == PACKAGE_FILE_TAG)
             {
-                ReverseBytes = false;
+                // ReverseBytes = false;
             }
             else
             {
@@ -519,7 +546,7 @@ namespace PakReader
                 {
                     throw new IOException("Wrong package tag in file. Probably the file is encrypted.");
                 }
-                ReverseBytes = true;
+                // ReverseBytes = true;
                 Tag = PACKAGE_FILE_TAG;
             }
 

@@ -1,4 +1,5 @@
 ﻿using SkiaSharp;
+using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -31,6 +32,10 @@ namespace PakReader
                 case "ubulk":
                     package.ubulk = entry;
                     package.BulkReader = reader;
+                    break;
+                case "ini":
+                    package.ini = entry;
+                    package.IniReader = reader;
                     break;
             }
             return package;
@@ -71,10 +76,12 @@ namespace PakReader
         public BasePakEntry uasset;
         public BasePakEntry uexp;
         public BasePakEntry ubulk;
+        public BasePakEntry ini;
 
         public PakReader AssetReader;
         public PakReader ExpReader;
         public PakReader BulkReader;
+        public PakReader IniReader;
         public ExportObject[] Exports
         {
             get

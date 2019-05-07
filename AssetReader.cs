@@ -121,7 +121,7 @@ namespace PakReader
             }
         }
 
-        static T[] read_tarray<T>(BinaryReader reader, Func<BinaryReader, T> getter)
+        public static T[] read_tarray<T>(BinaryReader reader, Func<BinaryReader, T> getter)
         {
             int length = reader.ReadInt32();
             T[] container = new T[length];
@@ -294,42 +294,98 @@ namespace PakReader
         {
             internal AssetSummary(BinaryReader reader)
             {
+                Console.WriteLine("starting position: " + reader.BaseStream.Position);
                 tag = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", tag: " + tag);
                 legacy_file_version = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", legacy_file_version: " + legacy_file_version);
                 legacy_ue3_version = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", legacy_ue3_version: " + legacy_ue3_version);
                 file_version_u34 = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", file_version_u34: " + file_version_u34);
                 file_version_licensee_ue4 = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", file_version_licensee_ue4: " + file_version_licensee_ue4);
                 custom_version_container = read_tarray(reader, r => new FCustomVersion(reader));
+                Console.WriteLine(reader.BaseStream.Position + ", custom_version_container: " + custom_version_container.Length);
                 total_header_size = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", total_header_size: " + total_header_size);
                 folder_name = read_string(reader);
+                Console.WriteLine(reader.BaseStream.Position + ", folder_name: " + folder_name);
                 package_flags = reader.ReadUInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", package_flags: " + package_flags);
                 name_count = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", name_count: " + name_count);
                 name_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", name_offset: " + name_offset);
                 gatherable_text_data_count = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", gatherable_text_data_count: " + gatherable_text_data_count);
                 gatherable_text_data_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", gatherable_text_data_offset: " + gatherable_text_data_offset);
                 export_count = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", export_count: " + export_count);
                 export_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", export_offset: " + export_offset);
                 import_count = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", import_count: " + import_count);
                 import_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", import_offset: " + import_offset);
                 depends_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", depends_offset: " + depends_offset);
                 string_asset_references_count = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", string_asset_references_count: " + string_asset_references_count);
                 string_asset_references_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", string_asset_references_offset: " + string_asset_references_offset);
                 searchable_names_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", searchable_names_offset: " + searchable_names_offset);
                 thumbnail_table_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", thumbnail_table_offset: " + thumbnail_table_offset);
                 guid = new FGuid(reader);
+                Console.WriteLine(reader.BaseStream.Position + ", guid: " + guid.D);
                 generations = read_tarray(reader, r => new FGenerationInfo(reader));
+                Console.WriteLine(reader.BaseStream.Position + ", generations: " + generations);
                 saved_by_engine_version = new FEngineVersion(reader);
+                Console.WriteLine(reader.BaseStream.Position + ", saved_by_engine_version: " + saved_by_engine_version);
                 compatible_with_engine_version = new FEngineVersion(reader);
+                Console.WriteLine(reader.BaseStream.Position + ", compatible_with_engine_version: " + compatible_with_engine_version);
                 compression_flags = reader.ReadUInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", compression_flags: " + compression_flags);
                 compressed_chunks = read_tarray(reader, r => new FCompressedChunk(reader));
+                Console.WriteLine(reader.BaseStream.Position + ", compressed_chunks: " + compressed_chunks.Length);
                 package_source = reader.ReadUInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", package_source: " + package_source);
                 additional_packages_to_cook = read_tarray(reader, r => read_string(r));
+                Console.WriteLine(reader.BaseStream.Position + ", additional_packages_to_cook: " + additional_packages_to_cook);
                 asset_registry_data_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", asset_registry_data_offset: " + asset_registry_data_offset);
                 buld_data_start_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", buld_data_start_offset: " + buld_data_start_offset);
                 world_tile_info_data_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", world_tile_info_data_offset: " + world_tile_info_data_offset);
                 chunk_ids = read_tarray(reader, r => r.ReadInt32());
+                Console.WriteLine(reader.BaseStream.Position + ", chunk_ids: " + chunk_ids);
                 preload_dependency_count = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", preload_dependency_count: " + preload_dependency_count);
                 preload_dependency_offset = reader.ReadInt32();
+                Console.WriteLine(reader.BaseStream.Position + ", preload_dependency_offset: " + preload_dependency_offset);
+                var pos = reader.BaseStream.Position;
+                reader.BaseStream.Seek(0, SeekOrigin.Begin);
+                Console.WriteLine(ToHex(reader.ReadBytes((int)pos)));
+                Console.WriteLine("ending position: " + reader.BaseStream.Position);
+            }
+            static readonly uint[] _Lookup32 = Enumerable.Range(0, 256).Select(i => {
+                string s = i.ToString("x2");
+                return s[0] + ((uint)s[1] << 16);
+            }).ToArray();
+            public static string ToHex(byte[] bytes)
+            {
+                var result = new char[bytes.Length * 2];
+                for (int i = 0; i < bytes.Length; i++)
+                {
+                    var val = _Lookup32[bytes[i]];
+                    result[2 * i] = (char)val;
+                    result[2 * i + 1] = (char)(val >> 16);
+                }
+                return new string(result);
             }
 
             public int tag;
