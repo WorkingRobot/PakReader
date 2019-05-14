@@ -103,8 +103,6 @@ namespace PakReader
                 MountPoint = "/";
             }
 
-            Console.WriteLine("Mount point is " + MountPoint);
-
             int count = infoReader.ReadInt32();
 
             FileInfos = new FPakEntry[count];
