@@ -77,7 +77,7 @@ namespace PakReader
                         
                         long CurrentFileOffset = reader.BaseStream.Position;
                         reader.BaseStream.Seek(LocalizedStringArrayOffset, SeekOrigin.Begin);
-                        TmpLocalizedStringArray = AssetReader.read_tarray(reader, r => AssetReader.read_string(r));
+                        TmpLocalizedStringArray = AssetReader.read_tarray(reader, r => CleanString(AssetReader.read_string(r)));
                         reader.BaseStream.Seek(CurrentFileOffset, SeekOrigin.Begin);
 
                         LocalizedStringArray = new FTextLocalizationResourceString[TmpLocalizedStringArray.Length];
@@ -111,7 +111,7 @@ namespace PakReader
                 }
                 else
                 {
-                    Namespace = new FTextKey(AssetReader.read_string(reader));
+                    Namespace = new FTextKey(CleanString(AssetReader.read_string(reader)));
                 }
 
                 var Entries = new Dictionary<string, string>();
@@ -129,7 +129,7 @@ namespace PakReader
                     }
                     else
                     {
-                        Key = new FTextKey(AssetReader.read_string(reader));
+                        Key = new FTextKey(CleanString(AssetReader.read_string(reader)));
                     }
 
                     FEntry NewEntry;
@@ -164,7 +164,7 @@ namespace PakReader
                     }
                     else
                     {
-                        NewEntry.LocalizedString = AssetReader.read_string(reader);
+                        NewEntry.LocalizedString = CleanString(AssetReader.read_string(reader));
                     }
 
                     Entries.Add(Key.String, NewEntry.LocalizedString);
@@ -174,6 +174,12 @@ namespace PakReader
 
             return ret;
         }
+
+        internal static string CleanString(string inp) => string.IsNullOrEmpty(inp) ?
+            inp :
+            inp[inp.Length - 1] == '\u0000' ?
+                inp.Substring(0, inp.Length - 1) :
+                inp;
     }
 
     public class LocResFile
@@ -196,7 +202,7 @@ namespace PakReader
         public FTextKey(BinaryReader reader)
         {
             StrHash = reader.ReadUInt32();
-            String = AssetReader.read_string(reader);
+            String = LocReader.CleanString(AssetReader.read_string(reader));
         }
 
         public FTextKey(string str)
@@ -213,7 +219,7 @@ namespace PakReader
 
         public FTextLocalizationResourceString(BinaryReader reader)
         {
-            String = AssetReader.read_string(reader);
+            String = LocReader.CleanString(AssetReader.read_string(reader));
             RefCount = reader.ReadInt32();
         }
 
