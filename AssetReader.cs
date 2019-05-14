@@ -64,6 +64,9 @@ namespace PakReader
                     case "Texture2D":
                         Exports[ind] = new Texture2D(reader, name_map, import_map, asset_length, export_size, bulkReader);
                         break;
+                    case "FontFace":
+                        Exports[ind] = new FontFace(reader, name_map, import_map);
+                        break;
                     /*
                     case "DataTable":
                         throw new NotImplementedException("Not implemented data table exporting");
@@ -91,6 +94,22 @@ namespace PakReader
             }
             ind = 0;
 
+        }
+
+        static readonly uint[] _Lookup32 = Enumerable.Range(0, 256).Select(i => {
+            string s = i.ToString("X2");
+            return s[0] + ((uint)s[1] << 16);
+        }).ToArray();
+        internal static string ToHex(params byte[] bytes)
+        {
+            var result = new char[bytes.Length * 2];
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                var val = _Lookup32[bytes[i]];
+                result[2 * i] = (char)val;
+                result[2 * i + 1] = (char)(val >> 16);
+            }
+            return new string(result);
         }
 
         internal static string read_string(BinaryReader reader)
@@ -221,6 +240,11 @@ namespace PakReader
                 case "SetProperty":
                     tag_data = read_fname(reader, name_map);
                     break;
+                case "StrProperty":
+                    reader.ReadByte();
+                    tag_data = read_string(reader);
+                    reader.BaseStream.Seek(-1, SeekOrigin.Current);
+                    break;
                 default:
                     tag_data = null;
                     break;
@@ -311,7 +335,7 @@ namespace PakReader
             }
         }
 
-        struct AssetSummary
+        public struct AssetSummary
         {
             internal AssetSummary(BinaryReader reader)
             {
@@ -782,20 +806,24 @@ namespace PakReader
             }
         }
 
-        static (FPropertyTagType type, object data) read_map_value(BinaryReader reader, string inner_type, string struct_type, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        static object read_map_value(BinaryReader reader, string inner_type, string struct_type, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
             switch (inner_type)
             {
                 case "BoolProperty":
-                    return (FPropertyTagType.BoolProperty, reader.ReadByte() != 1);
+                    return reader.ReadByte() != 1;
                 case "EnumProperty":
-                    return (FPropertyTagType.EnumProperty, read_fname(reader, name_map));
+                    return read_fname(reader, name_map);
                 case "UInt32Property":
-                    return (FPropertyTagType.UInt32Property, reader.ReadUInt32());
+                    return reader.ReadUInt32();
                 case "StructProperty":
-                    return (FPropertyTagType.StructProperty, new UScriptStruct(reader, name_map, import_map, struct_type));
+                    return new UScriptStruct(reader, name_map, import_map, struct_type);
                 case "NameProperty":
-                    return (FPropertyTagType.NameProperty, read_fname(reader, name_map));
+                    return read_fname(reader, name_map);
+                case "StrProperty":
+                    return read_string(reader);
+                case "TextProperty":
+                    return new FText(reader);
                 default:
                     return (FPropertyTagType.StructProperty, new UScriptStruct(reader, name_map, import_map, inner_type));
             }
@@ -803,7 +831,7 @@ namespace PakReader
 
         internal struct UScriptMap
         {
-            public ((FPropertyTagType type, object data), (FPropertyTagType type, object data))[] map_data;
+            public Dictionary<object, object> map_data;
 
             public UScriptMap(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, string key_type, string value_type)
             {
@@ -814,10 +842,10 @@ namespace PakReader
                 }
 
                 int num = reader.ReadInt32();
-                map_data = new ValueTuple<(FPropertyTagType type, object data), (FPropertyTagType type, object data)>[num];
+                map_data = new Dictionary<object, object>(num);
                 for (int i = 0; i < num; i++)
                 {
-                    map_data[i] = (read_map_value(reader, key_type, "StructProperty", name_map, import_map), read_map_value(reader, value_type, "StructProperty", name_map, import_map));
+                    map_data[read_map_value(reader, key_type, "StructProperty", name_map, import_map)] = read_map_value(reader, value_type, "StructProperty", name_map, import_map);
                 }
             }
         }
@@ -995,6 +1023,11 @@ namespace PakReader
         public float b;
         public float a;
 
+        [JsonProperty]
+        public string Hex => a == 1 || a == 0 ?
+            ToHex((byte)Math.Round(r * 256), (byte)Math.Round(g * 256), (byte)Math.Round(b * 256)) :
+            ToHex((byte)Math.Round(r * 256), (byte)Math.Round(g * 256), (byte)Math.Round(b * 256), (byte)Math.Round(a * 256));
+
         internal FLinearColor(BinaryReader reader)
         {
             r = reader.ReadSingle();
@@ -1010,6 +1043,11 @@ namespace PakReader
         public byte g;
         public byte b;
         public byte a;
+
+        [JsonProperty]
+        public string Hex => a == 0 || a == 255 ?
+            ToHex(r, g, b) :
+            ToHex(r, g, b, a);
 
         internal FColor(BinaryReader reader)
         {
@@ -1138,7 +1176,7 @@ namespace PakReader
     public sealed class Texture2D : ExportObject, IDisposable
     {
         public UObject base_object;
-        public uint cooked;
+        public bool cooked;
         internal FTexturePlatformData[] textures;
 
         internal Texture2D(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, int asset_file_size, long export_size, BinaryReader ubulk)
@@ -1149,8 +1187,8 @@ namespace PakReader
             new FStripDataFlags(reader); // why are there two
 
             List<FTexturePlatformData> texs = new List<FTexturePlatformData>();
-            uint cooked = reader.ReadUInt32();
-            if (cooked == 1)
+            cooked = reader.ReadUInt32() == 1;
+            if (cooked)
             {
                 string pixel_format = read_fname(reader, name_map);
                 while (pixel_format != "None")
@@ -1174,6 +1212,23 @@ namespace PakReader
         public void Dispose()
         {
             textures = null;
+        }
+    }
+
+    public sealed class FontFace : ExportObject
+    {
+        public UObject base_object;
+        [JsonIgnore]
+        public uint data;
+
+        internal FontFace(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        {
+            var uobj = new UObject(reader, name_map, import_map, "FontFace", true); // unsure if read zero is true or false
+
+            new FStripDataFlags(reader); // no idea
+            new FStripDataFlags(reader); // why are there two
+
+            data = reader.ReadUInt32();
         }
     }
 
@@ -1220,7 +1275,7 @@ namespace PakReader
             var properties_ = new List<FPropertyTag>();
             while (true)
             {
-                var tag = read_property_tag(reader, name_map, import_map, true);
+                var tag = read_property_tag(reader, name_map, import_map, export_type != "FontFace");
                 if (tag.Equals(default))
                 {
                     break;
@@ -1239,7 +1294,9 @@ namespace PakReader
 
     public struct FText
     {
+        [JsonIgnore]
         public uint flags;
+        [JsonIgnore]
         public byte history_type;
         public string @namespace;
         public string key;
