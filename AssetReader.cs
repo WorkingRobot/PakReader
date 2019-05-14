@@ -64,6 +64,7 @@ namespace PakReader
                     case "Texture2D":
                         Exports[ind] = new Texture2D(reader, name_map, import_map, asset_length, export_size, bulkReader);
                         break;
+                    /*
                     case "DataTable":
                         throw new NotImplementedException("Not implemented data table exporting");
                     case "SkeletalMesh":
@@ -74,6 +75,7 @@ namespace PakReader
                         throw new NotImplementedException("Not implemented skeleton exporting");
                     case "CurveTable":
                         throw new NotImplementedException("Not implemented curve table exporting");
+                        */
                     default:
                         Exports[ind] = new UObject(reader, name_map, import_map, export_type, true);
                         break;
@@ -117,7 +119,15 @@ namespace PakReader
             {
                 byte[] bytes = reader.ReadBytes(length);
                 if (bytes.Length == 0) return string.Empty;
-                return Encoding.UTF8.GetString(bytes).Substring(0, length - 1);
+                var ret = Encoding.UTF8.GetString(bytes);
+                if (ret.Length != length)
+                {
+                    return ret;
+                }
+                else
+                {
+                    return ret.Substring(0, length - 1);
+                }
             }
         }
 
@@ -165,14 +175,25 @@ namespace PakReader
 
         internal static FPropertyTag read_property_tag(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, bool read_data)
         {
-            string name = read_fname(reader, name_map);
-            if (name == "None")
+            string name, property_type;
+            try
+            {
+                name = read_fname(reader, name_map);
+                if (name == "None")
+                {
+                    return default;
+                }
+                property_type = read_fname(reader, name_map).Trim();
+            }
+            catch (EndOfStreamException)
+            {
+                return default;
+            }
+            catch (IndexOutOfRangeException)
             {
                 return default;
             }
 
-            //Console.WriteLine("pos " + reader.BaseStream.Position);
-            string property_type = read_fname(reader, name_map).Trim();
             int size = reader.ReadInt32();
             int array_index = reader.ReadInt32();
 
@@ -237,7 +258,7 @@ namespace PakReader
                 property_type = property_type,
                 size = size,
                 tag = tag.type,
-                tag_data = tag.data
+                tag_data = read_data ? tag.data : tag_data
             };
         }
 
