@@ -806,7 +806,7 @@ namespace PakReader
             }
         }
 
-        static object read_map_value(BinaryReader reader, string inner_type, string struct_type, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        internal static object read_map_value(BinaryReader reader, string inner_type, string struct_type, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
             switch (inner_type)
             {
@@ -826,27 +826,6 @@ namespace PakReader
                     return new FText(reader);
                 default:
                     return (FPropertyTagType.StructProperty, new UScriptStruct(reader, name_map, import_map, inner_type));
-            }
-        }
-
-        internal struct UScriptMap
-        {
-            public Dictionary<object, object> map_data;
-
-            public UScriptMap(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, string key_type, string value_type)
-            {
-                int num_keys_to_remove = reader.ReadInt32();
-                if (num_keys_to_remove != 0)
-                {
-                    throw new NotSupportedException($"Could not read MapProperty with types: {key_type} {value_type}");
-                }
-
-                int num = reader.ReadInt32();
-                map_data = new Dictionary<object, object>(num);
-                for (int i = 0; i < num; i++)
-                {
-                    map_data[read_map_value(reader, key_type, "StructProperty", name_map, import_map)] = read_map_value(reader, value_type, "StructProperty", name_map, import_map);
-                }
             }
         }
     }
@@ -1168,6 +1147,27 @@ namespace PakReader
             key_guid = new FGuid(reader);
             object_id = new FGuid(reader);
             object_path = read_string(reader);
+        }
+    }
+
+    public struct UScriptMap
+    {
+        public Dictionary<object, object> map_data;
+
+        internal UScriptMap(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, string key_type, string value_type)
+        {
+            int num_keys_to_remove = reader.ReadInt32();
+            if (num_keys_to_remove != 0)
+            {
+                throw new NotSupportedException($"Could not read MapProperty with types: {key_type} {value_type}");
+            }
+
+            int num = reader.ReadInt32();
+            map_data = new Dictionary<object, object>(num);
+            for (int i = 0; i < num; i++)
+            {
+                map_data[read_map_value(reader, key_type, "StructProperty", name_map, import_map)] = read_map_value(reader, value_type, "StructProperty", name_map, import_map);
+            }
         }
     }
 
