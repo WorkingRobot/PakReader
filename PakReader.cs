@@ -115,7 +115,13 @@ namespace PakReader
 
         public string GetFile(int i) => FileInfos[i].Name;
 
-        public Stream GetPackageStream(BasePakEntry entry) => new FPakFile(reader, entry, Aes).GetStream();
+        public Stream GetPackageStream(BasePakEntry entry)
+        {
+            lock (reader)
+            {
+                return new FPakFile(reader, entry, Aes).GetStream();
+            }
+        }
 
         public void Export(BasePakEntry uasset, BasePakEntry uexp, BasePakEntry ubulk)
         {
