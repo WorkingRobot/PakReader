@@ -58,6 +58,7 @@ namespace PakReader
             {
                 string export_type = v.class_index.import;
                 long position = v.serial_offset - asset.Length;
+                //Console.WriteLine("Start position " + position);
                 reader.BaseStream.Seek(position, SeekOrigin.Begin);
                 switch (export_type)
                 {
@@ -67,18 +68,21 @@ namespace PakReader
                     case "FontFace":
                         Exports[ind] = new FontFace(reader, name_map, import_map);
                         break;
-                    /*
                     case "DataTable":
-                        throw new NotImplementedException("Not implemented data table exporting");
-                    case "SkeletalMesh":
-                        throw new NotImplementedException("Not implemented mesh exporting");
-                    case "AnimSequence":
-                        throw new NotImplementedException("Not implemented animation exporting");
-                    case "Skeleton":
-                        throw new NotImplementedException("Not implemented skeleton exporting");
+                        Exports[ind] = new UDataTable(reader, name_map, import_map);
+                        break;
                     case "CurveTable":
-                        throw new NotImplementedException("Not implemented curve table exporting");
-                        */
+                        Exports[ind] = new UCurveTable(reader, name_map, import_map);
+                        break;
+                    case "SkeletalMesh":
+                        Exports[ind] = new USkeletalMesh(reader, name_map, import_map);
+                        break;
+                    case "AnimSequence":
+                        Exports[ind] = new UAnimSequence(reader, name_map, import_map);
+                        break;
+                    case "Skeleton":
+                        Exports[ind] = new USkeleton(reader, name_map, import_map);
+                        break;
                     default:
                         Exports[ind] = new UObject(reader, name_map, import_map, export_type, true);
                         break;
@@ -152,7 +156,7 @@ namespace PakReader
 
         public static T[] read_tarray<T>(BinaryReader reader, Func<BinaryReader, T> getter)
         {
-            int length = reader.ReadInt32();
+            uint length = reader.ReadUInt32();
             T[] container = new T[length];
             for (int i = 0; i < length; i++)
             {
@@ -498,6 +502,42 @@ namespace PakReader
             }
         }
 
+        public struct FSmartName
+        {
+            public string display_name;
+
+            internal FSmartName(BinaryReader reader, FNameEntrySerialized[] name_map)
+            {
+                display_name = read_fname(reader, name_map);
+            }
+        }
+
+        public struct FCompressedOffsetData
+        {
+            public int[] offset_data;
+            public int strip_size;
+        }
+
+        public struct FCompressedSegment
+        {
+            public int start_frame;
+            public int num_frames;
+            public int byte_stream_offset;
+            public byte translation_compression_format;
+            public byte rotation_compression_format;
+            public byte scale_compression_format;
+
+            public FCompressedSegment(BinaryReader reader)
+            {
+                start_frame = reader.ReadInt32();
+                num_frames = reader.ReadInt32();
+                byte_stream_offset = reader.ReadInt32();
+                translation_compression_format = reader.ReadByte();
+                rotation_compression_format = reader.ReadByte();
+                scale_compression_format = reader.ReadByte();
+            }
+        }
+
         public struct FCompressedChunk
         {
             public int uncompressed_offset;
@@ -532,6 +572,10 @@ namespace PakReader
         {
             byte global_strip_flags;
             byte class_strip_flags;
+
+            public bool editor_data_stripped => (global_strip_flags & 1) != 0;
+            public bool server_data_stripped => (global_strip_flags & 2) != 0;
+            public bool class_data_stripped(byte flag) => (class_strip_flags & flag) != 0;
 
             internal FStripDataFlags(BinaryReader reader)
             {
@@ -630,6 +674,529 @@ namespace PakReader
                 element_count = reader.ReadInt32();
                 size_on_disk = reader.ReadInt32();
                 offset_in_file = reader.ReadInt64();
+            }
+        }
+
+        public enum AnimationCompressionFormat : uint
+        {
+            None,
+            Float96NoW,
+            Fixed48NoW,
+            IntervalFixed32NoW,
+            Fixed32NoW,
+            Float32NoW,
+            Identity,
+        }
+
+        public struct FAnimKeyHeader
+        {
+            public AnimationCompressionFormat key_format;
+            public uint component_mask;
+            public uint num_keys;
+            public bool has_time_tracks;
+
+            public FAnimKeyHeader(BinaryReader reader)
+            {
+                var packed = reader.ReadUInt32();
+                key_format = (AnimationCompressionFormat)(packed >> 28);
+                component_mask = (packed >> 24) & 0xF;
+                num_keys = packed & 0xFFFFFF;
+                has_time_tracks = (component_mask & 8) != 0;
+            }
+        }
+
+        public struct FTrack
+        {
+            public FVector[] translation;
+            public FQuat[] rotation;
+            public FVector[] scale;
+            public float[] translation_times;
+            public float[] rotation_times;
+            public float[] scale_times;
+        }
+
+        public struct FReferenceSkeleton
+        {
+            public FMeshBoneInfo[] ref_bone_info;
+            public FTransform[] ref_bone_pose;
+            public (string, int)[] name_to_index;
+
+            internal FReferenceSkeleton(BinaryReader reader, FNameEntrySerialized[] name_map)
+            {
+                ref_bone_info = read_tarray(reader, r => new FMeshBoneInfo(r, name_map));
+                ref_bone_pose = read_tarray(reader, r => new FTransform(r));
+
+                name_to_index = new (string, int)[reader.ReadUInt32()];
+                for(int i = 0; i < name_to_index.Length; i++)
+                {
+                    name_to_index[i] = (read_fname(reader, name_map), reader.ReadInt32());
+                }
+            }
+        }
+
+        public struct FMeshBoneInfo
+        {
+            public string name;
+            public int parent_index;
+            
+            internal FMeshBoneInfo(BinaryReader reader, FNameEntrySerialized[] name_map)
+            {
+                name = read_fname(reader, name_map);
+                parent_index = reader.ReadInt32();
+            }
+        }
+
+        public struct FTransform
+        {
+            public FQuat rotation;
+            public FVector translation;
+            public FVector scale_3d;
+
+            internal FTransform(BinaryReader reader)
+            {
+                rotation = new FQuat(reader);
+                translation = new FVector(reader);
+                scale_3d = new FVector(reader);
+            }
+        }
+
+        public struct FReferencePose
+        {
+            public string pose_name;
+            public FTransform[] reference_pose;
+
+            internal FReferencePose(BinaryReader reader, FNameEntrySerialized[] name_map)
+            {
+                pose_name = read_fname(reader, name_map);
+                reference_pose = read_tarray(reader, r => new FTransform(reader));
+            }
+        }
+
+        public struct FBoxSphereBounds
+        {
+            public FVector origin;
+            public FVector box_extend;
+            public float sphere_radius;
+
+            internal FBoxSphereBounds(BinaryReader reader)
+            {
+                origin = new FVector(reader);
+                box_extend = new FVector(reader);
+                sphere_radius = reader.ReadSingle();
+            }
+        }
+
+        public struct FSkeletalMaterial
+        {
+            public FPackageIndex material_interface;
+            public string material_slot_name;
+            public FMeshUVChannelInfo uv_channel_data;
+
+            internal FSkeletalMaterial(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+            {
+                material_interface = new FPackageIndex(reader, import_map);
+
+                // uint for serialize_slot_name
+                material_slot_name = reader.ReadUInt32() != 0 ? read_fname(reader, name_map) : "";
+                uv_channel_data = new FMeshUVChannelInfo(reader);
+            }
+        }
+
+        public struct FMeshUVChannelInfo
+        {
+            public bool initialized;
+            public bool override_densities;
+            public float[] local_uv_densities;
+
+            internal FMeshUVChannelInfo(BinaryReader reader)
+            {
+                initialized = reader.ReadUInt32() != 0;
+                override_densities = reader.ReadUInt32() != 0;
+                local_uv_densities = new float[4];
+                for(int i = 0; i < 4; i++)
+                {
+                    local_uv_densities[i] = reader.ReadSingle();
+                }
+            }
+        }
+
+        public struct FSkeletalMeshRenderData
+        {
+            public FSkelMeshRenderSection[] sections;
+            public FMultisizeIndexContainer indices;
+            public short[] active_bone_indices;
+            public short[] required_bones;
+
+            public FPositionVertexBuffer position_vertex_buffer;
+            public FStaticMeshVertexBuffer static_mesh_vertex_buffer;
+            public FSkinWeightVertexBuffer skin_weight_vertex_buffer;
+            public FSkinWeightProfilesData skin_data;
+            public FColorVertexBuffer? colour_vertex_buffer;
+
+            internal FSkeletalMeshRenderData(BinaryReader reader, FNameEntrySerialized[] name_map, bool has_vertex_colors)
+            {
+                var flags = new FStripDataFlags(reader);
+                sections = read_tarray(reader, r => new FSkelMeshRenderSection(r, name_map));
+                indices = new FMultisizeIndexContainer(reader);
+                active_bone_indices = read_tarray(reader, r => r.ReadInt16());
+                required_bones = read_tarray(reader, r => r.ReadInt16());
+
+                if (flags.server_data_stripped || flags.class_data_stripped(2))
+                {
+                    throw new FileLoadException("Could not read FSkelMesh, no renderable data");
+                }
+
+                skin_weight_vertex_buffer = new FSkinWeightVertexBuffer(reader);
+                position_vertex_buffer = default;// new FPositionVertexBuffer(reader);
+                static_mesh_vertex_buffer = default;// new FStaticMeshVertexBuffer(reader);
+                skin_data = new FSkinWeightProfilesData(reader, name_map);
+                colour_vertex_buffer = default; // has_vertex_colors ? (FColorVertexBuffer?)new FColorVertexBuffer(reader) : null;
+            }
+        }
+
+        public struct FSkelMeshRenderSection
+        {
+            public ushort material_index;
+            public uint base_index;
+            public uint num_triangles;
+            public uint base_vertex_index;
+            public FMeshToMeshVertData[] cloth_mapping_data;
+            public ushort[] bone_map;
+            public uint num_vertices;
+            public int max_bone_influences;
+            public FClothingSectionData clothing_data;
+            public bool disabled;
+
+            internal FSkelMeshRenderSection(BinaryReader reader, FNameEntrySerialized[] name_map)
+            {
+                var flags = new FStripDataFlags(reader);
+                material_index = reader.ReadUInt16();
+                base_index = reader.ReadUInt32();
+                num_triangles = reader.ReadUInt32();
+
+                var _recompute_tangent = reader.ReadUInt32() != 0;
+                var _cast_shadow = reader.ReadUInt32() != 0;
+                base_vertex_index = reader.ReadUInt32();
+                cloth_mapping_data = read_tarray(reader, r => new FMeshToMeshVertData(r));
+                bone_map = read_tarray(reader, r => r.ReadUInt16());
+                num_vertices = reader.ReadUInt32();
+                max_bone_influences = reader.ReadInt32();
+                Console.WriteLine(BitConverter.ToString(reader.ReadBytes(200)).Replace('-', ' '));
+                reader.BaseStream.Seek(-200, SeekOrigin.Current);
+                var _correspond_cloth_asset_index = reader.ReadInt16();
+                clothing_data = new FClothingSectionData(reader);
+                var _vertex_buffer = new FDuplicatedVerticesBuffer(reader);
+                disabled = reader.ReadUInt32() != 0;
+            }
+        }
+
+        public struct FMeshToMeshVertData
+        {
+            public FQuat position_bary_coords;
+            public FQuat normal_bary_coords;
+            public FQuat tangent_bary_coords;
+            public ushort[] source_mesh_vert_indices;
+            public uint[] padding;
+
+            public FMeshToMeshVertData(BinaryReader reader)
+            {
+                position_bary_coords = new FQuat(reader);
+                normal_bary_coords = new FQuat(reader);
+                tangent_bary_coords = new FQuat(reader);
+
+                source_mesh_vert_indices = new ushort[4];
+                for (int i = 0; i < 4; i++)
+                {
+                    source_mesh_vert_indices[i] = reader.ReadUInt16();
+                }
+                padding = new uint[2];
+                for (int i = 0; i < 4; i++)
+                {
+                    padding[i] = reader.ReadUInt32();
+                }
+            }
+        }
+
+        public struct FClothingSectionData
+        {
+            public FGuid asset_guid;
+            public int asset_lod_index;
+
+            public FClothingSectionData(BinaryReader reader)
+            {
+                asset_guid = new FGuid(reader);
+                asset_lod_index = reader.ReadInt32();
+            }
+        }
+
+        public struct FDuplicatedVerticesBuffer
+        {
+            public uint[] dup_vert;
+            public FIndexLengthPair[] dup_vert_index;
+
+            public FDuplicatedVerticesBuffer(BinaryReader reader)
+            {
+                dup_vert = read_tarray(reader, r => r.ReadUInt32());
+                dup_vert_index = read_tarray(reader, r => new FIndexLengthPair(reader));
+            }
+        }
+
+        public struct FSkinWeightProfilesData
+        {
+            public (string, FRuntimeSkinWeightProfileData)[] override_data;
+
+            internal FSkinWeightProfilesData(BinaryReader reader, FNameEntrySerialized[] name_map)
+            {
+                override_data = new (string, FRuntimeSkinWeightProfileData)[reader.ReadInt32()];
+                for(int i = 0; i < override_data.Length; i++)
+                {
+                    override_data[i] = (read_fname(reader, name_map), new FRuntimeSkinWeightProfileData(reader));
+                }
+            }
+        }
+
+        public struct FRuntimeSkinWeightProfileData
+        {
+            public FSkinWeightOverrideInfo[] overrides_info;
+            public ushort[] weights;
+            public (uint, uint)[] vertex_index_override_index;
+
+            public FRuntimeSkinWeightProfileData(BinaryReader reader)
+            {
+                overrides_info = read_tarray(reader, r => new FSkinWeightOverrideInfo(r));
+                weights = read_tarray(reader, r => reader.ReadUInt16());
+                vertex_index_override_index = new (uint, uint)[reader.ReadInt32()];
+                for(int i = 0; i < vertex_index_override_index.Length; i++)
+                {
+                    vertex_index_override_index[i] = (reader.ReadUInt32(), reader.ReadUInt32());
+                }
+            }
+        }
+
+        public struct FSkinWeightOverrideInfo
+        {
+            public uint influences_offset;
+            public byte num_influences;
+
+            public FSkinWeightOverrideInfo(BinaryReader reader)
+            {
+                influences_offset = reader.ReadUInt32();
+                num_influences = reader.ReadByte();
+            }
+        }
+
+        public struct FIndexLengthPair
+        {
+            public uint word1;
+            public uint word2;
+
+            public FIndexLengthPair(BinaryReader reader)
+            {
+                word1 = reader.ReadUInt32();
+                word2 = reader.ReadUInt32();
+            }
+        }
+
+        public struct FMultisizeIndexContainer
+        {
+            public byte data_size;
+            public object[] data;
+
+            public FMultisizeIndexContainer(BinaryReader reader)
+            {
+                data_size = reader.ReadByte();
+                var _element_size = reader.ReadInt32();
+                switch (data_size)
+                {
+                    case 2:
+                        data = read_tarray(reader, r => (object)r.ReadUInt16());
+                        return;
+                    case 4:
+                        data = read_tarray(reader, r => (object)r.ReadUInt32());
+                        return;
+                    default:
+                        throw new FileLoadException("No format size");
+                }
+            }
+        }
+
+        public struct FPositionVertexBuffer
+        {
+            public FVector[] verts;
+            public int stride;
+            public int num_verts;
+
+            public FPositionVertexBuffer(BinaryReader reader)
+            {
+                stride = reader.ReadInt32();
+                num_verts = reader.ReadInt32();
+                var _element_size = reader.ReadInt32();
+                verts = read_tarray(reader, r => new FVector(r));
+            }
+        }
+
+        public struct FStaticMeshVertexBuffer
+        {
+            public int num_tex_coords;
+            public int num_vertices;
+            public FStaticMeshVertexDataTangent? tangents;
+            public FStaticMeshVertexDataUV? uvs;
+
+            public FStaticMeshVertexBuffer(BinaryReader reader)
+            {
+                var flags = new FStripDataFlags(reader);
+
+                num_tex_coords = reader.ReadInt32();
+                num_vertices = reader.ReadInt32();
+                var use_full_precision_uvs = reader.ReadInt32() != 0;
+                var use_high_precision_tangent = reader.ReadInt32() != 0;
+
+                if (flags.server_data_stripped)
+                {
+                    tangents = null;
+                    uvs = null;
+                    return;
+                }
+
+                var _element_size = reader.ReadInt32();
+                tangents = new FStaticMeshVertexDataTangent(reader, use_high_precision_tangent);
+
+                _element_size = reader.ReadInt32();
+                uvs = new FStaticMeshVertexDataUV(reader, use_high_precision_tangent);
+            }
+        }
+
+        public struct FStaticMeshVertexDataTangent
+        {
+            public (object normal, object tangent)[] array;
+            public bool hi_res;
+
+            public FStaticMeshVertexDataTangent(BinaryReader reader, bool hi_res)
+            {
+                this.hi_res = hi_res;
+                if (hi_res)
+                    array = read_tarray(reader, r => ((object)new FPackedRGBA16N(r), (object)new FPackedRGBA16N(r)));
+                else
+                    array = read_tarray(reader, r => ((object)new FPackedNormal(r), (object)new FPackedNormal(r)));
+            }
+        }
+
+        public struct FStaticMeshVertexDataUV
+        {
+            public object[] array;
+            public bool hi_res;
+
+            public FStaticMeshVertexDataUV(BinaryReader reader, bool hi_res)
+            {
+                this.hi_res = hi_res;
+                if (hi_res)
+                    array = read_tarray(reader, r => (object)new FVector2D(r));
+                else
+                    array = read_tarray(reader, r => (object)new FVector2DHalf(r));
+            }
+        }
+
+        public struct FPackedRGBA16N
+        {
+            public short x;
+            public short y;
+            public short z;
+            public short w;
+
+            public FPackedRGBA16N(BinaryReader reader)
+            {
+                x = reader.ReadInt16();
+                y = reader.ReadInt16();
+                z = reader.ReadInt16();
+                w = reader.ReadInt16();
+            }
+        }
+
+        public struct FPackedNormal
+        {
+            public byte x;
+            public byte y;
+            public byte z;
+            public byte w;
+
+            public FPackedNormal(BinaryReader reader)
+            {
+                x = reader.ReadByte();
+                y = reader.ReadByte();
+                z = reader.ReadByte();
+                w = reader.ReadByte();
+            }
+        }
+
+        public struct FVector2DHalf
+        {
+            public float x;
+            public float y;
+            public float z;
+            public float w;
+
+            public FVector2DHalf(BinaryReader reader)
+            {
+                x = HalfHelper.HalfToSingle(reader.ReadUInt16());
+                y = HalfHelper.HalfToSingle(reader.ReadUInt16());
+                z = HalfHelper.HalfToSingle(reader.ReadUInt16());
+                w = HalfHelper.HalfToSingle(reader.ReadUInt16());
+            }
+        }
+
+        public struct FSkinWeightVertexBuffer
+        {
+            public FSkinWeightInfo[] weights;
+            public int num_vertices;
+
+            public FSkinWeightVertexBuffer(BinaryReader reader)
+            {
+                var flags = new FStripDataFlags(reader);
+
+                var extra_bone_influences = reader.ReadInt32() != 0;
+                num_vertices = reader.ReadInt32();
+
+                if (flags.server_data_stripped)
+                {
+                    weights = null;
+                    return;
+                }
+
+                var _element_size = reader.ReadInt32();
+                var num_influences = extra_bone_influences ? 8 : 4;
+                weights = read_tarray(reader, r => new FSkinWeightInfo(r, num_influences));
+            }
+        }
+
+        public struct FSkinWeightInfo
+        {
+            public byte[] bone_index;
+            public byte[] bone_weight;
+
+            public FSkinWeightInfo(BinaryReader reader, int max_influences)
+            {
+                bone_index = reader.ReadBytes(max_influences);
+                bone_weight = reader.ReadBytes(max_influences);
+            }
+        }
+
+        public struct FColorVertexBuffer
+        {
+            public int stride;
+            public int num_verts;
+            public FColor[] colors;
+
+            public FColorVertexBuffer(BinaryReader reader)
+            {
+                var flags = new FStripDataFlags(reader);
+                stride = reader.ReadInt32();
+                num_verts = reader.ReadInt32();
+                colors = null;
+                if (!flags.server_data_stripped && num_verts > 0)
+                {
+                    var _element_size = reader.ReadInt32();
+                    colors = read_tarray(reader, r => new FColor(reader));
+                }
             }
         }
 
@@ -1079,6 +1646,12 @@ namespace PakReader
             z = reader.ReadSingle();
             w = reader.ReadSingle();
         }
+
+        public void rebuild_w()
+        {
+            var ww = 1f - (x * x + y * y + z * z);
+            w = ww > 0 ? (float)Math.Sqrt(ww) : 0;
+        }
     }
 
     public struct FVector
@@ -1182,7 +1755,7 @@ namespace PakReader
         internal Texture2D(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, int asset_file_size, long export_size, BinaryReader ubulk)
         {
             var uobj = new UObject(reader, name_map, import_map, "Texture2D", true); // unsure if read zero is true or false
-
+            
             new FStripDataFlags(reader); // no idea
             new FStripDataFlags(reader); // why are there two
 
@@ -1223,12 +1796,477 @@ namespace PakReader
 
         internal FontFace(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
-            var uobj = new UObject(reader, name_map, import_map, "FontFace", true); // unsure if read zero is true or false
+            base_object = new UObject(reader, name_map, import_map, "FontFace", true); // unsure if read zero is true or false
 
             new FStripDataFlags(reader); // no idea
             new FStripDataFlags(reader); // why are there two
 
             data = reader.ReadUInt32();
+        }
+    }
+
+    public sealed class UDataTable : ExportObject
+    {
+        public UObject super_object;
+        public (string Name, UObject Object)[] rows;
+
+        internal UDataTable(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        {
+            super_object = new UObject(reader, name_map, import_map, "RowStruct", true); // unsure if read zero is true or false
+            
+            rows = new (string Name, UObject Object)[reader.ReadInt32()];
+
+            for (int i = 0; i < rows.Length; i++)
+            {
+                rows[i] = (read_fname(reader, name_map), new UObject(reader, name_map, import_map, "RowStruct", true));
+            }
+        }
+    }
+
+    public enum ECurveTableMode : byte
+    {
+        Empty,
+        SimpleCurves,
+        RichCurves,
+    }
+
+    public sealed class UCurveTable : ExportObject
+    {
+        public UObject super_object;
+        public ECurveTableMode curve_table_mode;
+        public (string Name, UObject Object)[] row_map;
+
+        internal UCurveTable(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        {
+            super_object = new UObject(reader, name_map, import_map, "CurveTable", true); // unsure if read zero is true or false
+
+            row_map = new (string Name, UObject Object)[reader.ReadInt32()];
+
+            curve_table_mode = (ECurveTableMode)reader.ReadByte();
+
+            string row_type;
+            switch (curve_table_mode)
+            {
+                case ECurveTableMode.Empty:
+                    row_type = "Empty";
+                    break;
+                case ECurveTableMode.SimpleCurves:
+                    row_type = "SimpleCurveKey";
+                    break;
+                case ECurveTableMode.RichCurves:
+                    row_type = "RichCurveKey";
+                    break;
+                default:
+                    throw new InvalidOperationException("Unsupported curve mode " + (byte)curve_table_mode);
+            }
+            for (int i = 0; i < row_map.Length; i++)
+            {
+                row_map[i] = (read_fname(reader, name_map), new UObject(reader, name_map, import_map, row_type, true));
+            }
+        }
+    }
+
+    public sealed class UAnimSequence : ExportObject
+    {
+        public UObject super_object;
+        public FGuid skeleton_guid;
+        public byte key_encoding_format;
+        public byte translation_compression_format;
+        public byte rotation_compression_format;
+        public byte scale_compression_format;
+        public int[] compressed_track_offsets;
+        public FCompressedOffsetData compressed_scale_offsets;
+        public FCompressedSegment[] compressed_segments;
+        public int[] compressed_track_to_skeleton_table;
+        public FSmartName[] compressed_curve_names;
+        public int compressed_raw_data_size;
+        public int compressed_num_frames;
+        public FTrack[] tracks;
+
+        internal UAnimSequence(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        {
+            super_object = new UObject(reader, name_map, import_map, "AnimSequence", true); // unsure if read zero is true or false
+            skeleton_guid = new FGuid(reader);
+            new FStripDataFlags(reader);
+            if (reader.ReadUInt32() == 0)
+            {
+                throw new FileLoadException("Could not decode AnimSequence (must be compressed)");
+            }
+            key_encoding_format = reader.ReadByte();
+            translation_compression_format = reader.ReadByte();
+            rotation_compression_format = reader.ReadByte();
+            scale_compression_format = reader.ReadByte();
+            compressed_track_offsets = read_tarray(reader, r => r.ReadInt32());
+            compressed_scale_offsets = new FCompressedOffsetData
+            {
+                offset_data = read_tarray(reader, r => r.ReadInt32()),
+                strip_size = reader.ReadInt32()
+            };
+
+            compressed_segments = read_tarray(reader, r => new FCompressedSegment(r));
+            compressed_track_to_skeleton_table = read_tarray(reader, r => r.ReadInt32());
+            compressed_curve_names = read_tarray(reader, r => new FSmartName(reader, name_map));
+
+            compressed_raw_data_size = reader.ReadInt32();
+            compressed_num_frames = reader.ReadInt32();
+            int num_bytes = reader.ReadInt32();
+            if (reader.ReadUInt32() != 0)
+            {
+                throw new NotImplementedException("Bulk data for animations not supported yet");
+            }
+            tracks = read_tracks(new MemoryStream(reader.ReadBytes(num_bytes)));
+        }
+
+        static float read_fixed48(ushort val) => val - 255f;
+
+        static float read_fixed48_q(ushort val) => (val / 32767f) - 1;
+
+        const uint X_MASK = 0x000003ff;
+        const uint Y_MASK = 0x001ffc00;
+
+        static FVector read_fixed32_vec(uint val, FVector min, FVector max)
+        {
+            return new FVector
+            {
+                x = ((val & X_MASK) - 511) / 511f * max.x + min.x,
+                y = (((val & Y_MASK) >> 10) - 1023) / 1023f * max.y + min.y,
+                z = ((val >> 21) - 1023) / 1023f * max.z + min.z
+            };
+        }
+
+        static FQuat read_fixed32_quat(uint val, FVector min, FVector max)
+        {
+            var q = new FQuat
+            {
+                x = ((val >> 21) - 1023) / 1023f * max.x + min.x,
+                y = (((val & Y_MASK) >> 10) - 1023) / 1023f * max.y + min.y,
+                z = ((val & X_MASK) - 511) / 511f * max.z + min.z,
+                w = 1
+            };
+            q.rebuild_w();
+            return q;
+        }
+
+        static void align_reader(BinaryReader reader)
+        {
+            var pos = reader.BaseStream.Position % 4;
+            if (pos != 0) reader.BaseStream.Seek(4 - pos, SeekOrigin.Current);
+        }
+
+        static float[] read_times(BinaryReader reader, uint num_keys, uint num_frames)
+        {
+            if (num_keys <= 1) return new float[0];
+            align_reader(reader);
+
+            var ret = new float[num_keys];
+            if (num_frames < 256)
+            {
+                for (int i = 0; i < num_keys; i++)
+                {
+                    ret[i] = reader.ReadByte();
+                }
+            }
+            else
+            {
+                for (int i = 0; i < num_keys; i++)
+                {
+                    ret[i] = reader.ReadUInt16();
+                }
+            }
+            return ret;
+        }
+
+        private FTrack[] read_tracks(MemoryStream stream)
+        {
+            if (key_encoding_format != 2)
+            {
+                throw new NotImplementedException("Can only parse PerTrackCompression");
+            }
+            using (stream)
+            using (var reader = new BinaryReader(stream))
+            {
+                var num_tracks = compressed_track_offsets.Length / 2;
+                var num_frames = compressed_num_frames;
+
+                FTrack[] ret = new FTrack[num_tracks];
+                for (int i = 0; i < ret.Length; i++)
+                {
+                    FTrack track = new FTrack();
+
+                    // translation
+                    var offset = compressed_track_offsets[i * 2];
+                    if (offset != -1)
+                    {
+                        var header = new FAnimKeyHeader(reader);
+                        var min = new FVector();
+                        var max = new FVector();
+
+                        if (header.key_format == AnimationCompressionFormat.IntervalFixed32NoW)
+                        {
+                            if ((header.component_mask & 1) != 0)
+                            {
+                                min.x = reader.ReadSingle();
+                                max.x = reader.ReadSingle();
+                            }
+                            if ((header.component_mask & 2) != 0)
+                            {
+                                min.y = reader.ReadSingle();
+                                max.y = reader.ReadSingle();
+                            }
+                            if ((header.component_mask & 4) != 0)
+                            {
+                                min.z = reader.ReadSingle();
+                                max.z = reader.ReadSingle();
+                            }
+                        }
+
+                        track.translation = new FVector[header.num_keys];
+                        for (int j = 0; j < track.translation.Length; j++)
+                        {
+                            switch (header.key_format)
+                            {
+                                case AnimationCompressionFormat.None:
+                                case AnimationCompressionFormat.Float96NoW:
+                                    var fvec = new FVector();
+                                    if ((header.component_mask & 7) != 0)
+                                    {
+                                        if ((header.component_mask & 1) != 0) fvec.x = reader.ReadSingle();
+                                        if ((header.component_mask & 2) != 0) fvec.y = reader.ReadSingle();
+                                        if ((header.component_mask & 4) != 0) fvec.z = reader.ReadSingle();
+                                    }
+                                    else
+                                    {
+                                        fvec = new FVector(reader);
+                                    }
+                                    track.translation[j] = fvec;
+                                    break;
+                                case AnimationCompressionFormat.Fixed48NoW:
+                                    fvec = new FVector();
+                                    if ((header.component_mask & 1) != 0) fvec.x = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 2) != 0) fvec.y = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 4) != 0) fvec.z = read_fixed48(reader.ReadUInt16());
+                                    track.translation[j] = fvec;
+                                    break;
+                                case AnimationCompressionFormat.IntervalFixed32NoW:
+                                    track.translation[j] = read_fixed32_vec(reader.ReadUInt32(), min, max);
+                                    break;
+                            }
+                        }
+                        if (header.has_time_tracks)
+                        {
+                            track.translation_times = read_times(reader, header.num_keys, (uint)num_frames);
+                        }
+                        align_reader(reader);
+                    }
+
+                    // rotation
+                    offset = compressed_track_offsets[(i * 2) + 1];
+                    if (offset != -1)
+                    {
+                        var header = new FAnimKeyHeader(reader);
+                        var min = new FVector();
+                        var max = new FVector();
+
+                        if (header.key_format == AnimationCompressionFormat.IntervalFixed32NoW)
+                        {
+                            if ((header.component_mask & 1) != 0)
+                            {
+                                min.x = reader.ReadSingle();
+                                max.x = reader.ReadSingle();
+                            }
+                            if ((header.component_mask & 2) != 0)
+                            {
+                                min.y = reader.ReadSingle();
+                                max.y = reader.ReadSingle();
+                            }
+                            if ((header.component_mask & 4) != 0)
+                            {
+                                min.z = reader.ReadSingle();
+                                max.z = reader.ReadSingle();
+                            }
+                        }
+
+                        track.rotation = new FQuat[header.num_keys];
+                        for (int j = 0; j < track.rotation.Length; j++)
+                        {
+                            switch (header.key_format)
+                            {
+                                case AnimationCompressionFormat.None:
+                                case AnimationCompressionFormat.Float96NoW:
+                                    var fvec = new FVector();
+                                    if ((header.component_mask & 7) != 0)
+                                    {
+                                        if ((header.component_mask & 1) != 0) fvec.x = reader.ReadSingle();
+                                        if ((header.component_mask & 2) != 0) fvec.y = reader.ReadSingle();
+                                        if ((header.component_mask & 4) != 0) fvec.z = reader.ReadSingle();
+                                    }
+                                    else
+                                    {
+                                        fvec = new FVector(reader);
+                                    }
+                                    var fquat = new FQuat()
+                                    {
+                                        x = fvec.x,
+                                        y = fvec.y,
+                                        z = fvec.z
+                                    };
+                                    fquat.rebuild_w();
+                                    track.rotation[j] = fquat;
+                                    break;
+                                case AnimationCompressionFormat.Fixed48NoW:
+                                    fquat = new FQuat();
+                                    if ((header.component_mask & 1) != 0) fquat.x = read_fixed48_q(reader.ReadUInt16());
+                                    if ((header.component_mask & 2) != 0) fquat.y = read_fixed48_q(reader.ReadUInt16());
+                                    if ((header.component_mask & 4) != 0) fquat.z = read_fixed48_q(reader.ReadUInt16());
+                                    fquat.rebuild_w();
+                                    track.rotation[j] = fquat;
+                                    break;
+                                case AnimationCompressionFormat.IntervalFixed32NoW:
+                                    track.rotation[j] = read_fixed32_quat(reader.ReadUInt32(), min, max);
+                                    break;
+                            }
+                        }
+                        if (header.has_time_tracks)
+                        {
+                            track.rotation_times = read_times(reader, header.num_keys, (uint)num_frames);
+                        }
+                        align_reader(reader);
+                    }
+
+                    // scale
+                    offset = compressed_scale_offsets.offset_data[i * compressed_scale_offsets.strip_size];
+                    if (offset != -1)
+                    {
+                        var header = new FAnimKeyHeader(reader);
+                        var min = new FVector();
+                        var max = new FVector();
+
+                        if (header.key_format == AnimationCompressionFormat.IntervalFixed32NoW)
+                        {
+                            if ((header.component_mask & 1) != 0)
+                            {
+                                min.x = reader.ReadSingle();
+                                max.x = reader.ReadSingle();
+                            }
+                            if ((header.component_mask & 2) != 0)
+                            {
+                                min.y = reader.ReadSingle();
+                                max.y = reader.ReadSingle();
+                            }
+                            if ((header.component_mask & 4) != 0)
+                            {
+                                min.z = reader.ReadSingle();
+                                max.z = reader.ReadSingle();
+                            }
+                        }
+
+                        track.scale = new FVector[header.num_keys];
+                        for (int j = 0; j < track.scale.Length; j++)
+                        {
+                            switch (header.key_format)
+                            {
+                                case AnimationCompressionFormat.None:
+                                case AnimationCompressionFormat.Float96NoW:
+                                    var fvec = new FVector();
+                                    if ((header.component_mask & 7) != 0)
+                                    {
+                                        if ((header.component_mask & 1) != 0) fvec.x = reader.ReadSingle();
+                                        if ((header.component_mask & 2) != 0) fvec.y = reader.ReadSingle();
+                                        if ((header.component_mask & 4) != 0) fvec.z = reader.ReadSingle();
+                                    }
+                                    else
+                                    {
+                                        fvec = new FVector(reader);
+                                    }
+                                    track.scale[j] = fvec;
+                                    break;
+                                case AnimationCompressionFormat.Fixed48NoW:
+                                    fvec = new FVector();
+                                    if ((header.component_mask & 1) != 0) fvec.x = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 2) != 0) fvec.y = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 4) != 0) fvec.z = read_fixed48(reader.ReadUInt16());
+                                    track.scale[j] = fvec;
+                                    break;
+                                case AnimationCompressionFormat.IntervalFixed32NoW:
+                                    track.scale[j] = read_fixed32_vec(reader.ReadUInt32(), min, max);
+                                    break;
+                            }
+                        }
+                        if (header.has_time_tracks)
+                        {
+                            track.scale_times = read_times(reader, header.num_keys, (uint)num_frames);
+                        }
+                        align_reader(reader);
+                    }
+
+                    ret[i] = track;
+                }
+
+                if (reader.BaseStream.Position != stream.Length)
+                {
+                    throw new FileLoadException($"Could not read tracks correctly, {reader.BaseStream.Position - stream.Length} bytes remaining");
+                }
+                return ret;
+            }
+        }
+    }
+
+    public sealed class USkeleton : ExportObject
+    {
+        public UObject super_object;
+        public FReferenceSkeleton reference_skeleton;
+        public (string, FReferencePose)[] anim_retarget_sources;
+
+        internal USkeleton(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        {
+            super_object = new UObject(reader, name_map, import_map, "Skeleton", true);
+            reference_skeleton = new FReferenceSkeleton(reader, name_map);
+
+            anim_retarget_sources = new (string, FReferencePose)[reader.ReadUInt32()];
+            for(int i = 0; i < anim_retarget_sources.Length; i++)
+            {
+                anim_retarget_sources[i] = (read_fname(reader, name_map), new FReferencePose(reader, name_map));
+            }
+        }
+    }
+
+    public sealed class USkeletalMesh : ExportObject
+    {
+        public UObject super_object;
+        public FBoxSphereBounds imported_bounds;
+        public FSkeletalMaterial[] materials;
+        public FReferenceSkeleton ref_skeleton;
+        public FSkeletalMeshRenderData[] lod_models;
+
+        internal USkeletalMesh(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        {
+            super_object = new UObject(reader, name_map, import_map, "SkeletalMesh", true);
+            bool has_vertex_colors = false;
+            foreach (var prop in super_object.properties)
+            {
+                if (prop.name == "bHasVertexColors" && prop.tag == FPropertyTagType.BoolProperty)
+                {
+                    has_vertex_colors = (bool)prop.tag_data;
+                    break;
+                }
+            }
+            var flags = new FStripDataFlags(reader);
+            imported_bounds = new FBoxSphereBounds(reader);
+            materials = read_tarray(reader, r => new FSkeletalMaterial(r, name_map, import_map));
+            ref_skeleton = new FReferenceSkeleton(reader, name_map);
+
+            if (!flags.editor_data_stripped)
+            {
+                Console.WriteLine("editor data still present!");
+            }
+
+            if (reader.ReadUInt32() == 0)
+            {
+                throw new FileLoadException("No cooked data");
+            }
+            lod_models = read_tarray(reader, r => new FSkeletalMeshRenderData(r, name_map, has_vertex_colors));
+
+            reader.ReadUInt32(); // serialize_guid
         }
     }
 
