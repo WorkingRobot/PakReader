@@ -56,5 +56,16 @@ namespace PakReader
             Buffer.BlockCopy(inp, offset, ret, 0, length);
             return ret;
         }
+
+        public static float HalfToFloat(ushort h)
+        {
+            int sign = (h >> 15) & 0x00000001;
+            int exp = (h >> 10) & 0x0000001F;
+            int mant = h & 0x000003FF;
+
+            exp = exp + (127 - 15);
+            uint df = (uint)(sign << 31) | (uint)(exp << 23) | (uint)(mant << 13);
+            return BitConverter.ToSingle(BitConverter.GetBytes(df), 0);
+        }
     }
 }

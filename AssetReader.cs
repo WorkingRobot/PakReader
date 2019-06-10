@@ -822,71 +822,292 @@ namespace PakReader
 
         public struct FSkeletalMeshRenderData
         {
-            public FSkelMeshRenderSection[] sections;
-            public FMultisizeIndexContainer indices;
-            public short[] active_bone_indices;
-            public short[] required_bones;
-
-            public FPositionVertexBuffer position_vertex_buffer;
-            public FStaticMeshVertexBuffer static_mesh_vertex_buffer;
-            public FSkinWeightVertexBuffer skin_weight_vertex_buffer;
-            public FSkinWeightProfilesData skin_data;
-            public FColorVertexBuffer? colour_vertex_buffer;
+            public FSkelMeshSection[] Sections;
+            public FMultisizeIndexContainer Indices;
+            public FMultisizeIndexContainer AdjacencyIndexBuffer;
+            public short[] ActiveBoneIndices;
+            public short[] RequiredBones;
+            // public FSkelMeshChunk[] Chunks;
+            public int Size;
+            public int NumVertices;
+            public int NumTexCoords;
+            public FIntBulkData RawPointIndices;
+            public int[] MeshToImportVertexMap;
+            public int MaxImportVertex;
+            public FSkeletalMeshVertexClothBuffer ColorVertexBuffer;
+            public FSkeletalMeshVertexClothBuffer ClothVertexBuffer;
+            public FSkinWeightProfilesData SkinWeightProfilesData;
 
             internal FSkeletalMeshRenderData(BinaryReader reader, FNameEntrySerialized[] name_map, bool has_vertex_colors)
             {
                 var flags = new FStripDataFlags(reader);
-                sections = read_tarray(reader, r => new FSkelMeshRenderSection(r, name_map));
-                indices = new FMultisizeIndexContainer(reader);
-                active_bone_indices = read_tarray(reader, r => r.ReadInt16());
-                required_bones = read_tarray(reader, r => r.ReadInt16());
 
-                if (flags.server_data_stripped || flags.class_data_stripped(2))
+                Console.WriteLine("loading sections at " + reader.BaseStream.Position);
+                Sections = read_tarray(reader, r => new FSkelMeshSection(reader, name_map));
+
+                // UE4.19+ uses 32-bit index buffer (for editor data)
+                Console.WriteLine("loading indices at " + reader.BaseStream.Position);
+                Indices = new FMultisizeIndexContainer(reader);
+                //{
+                //    Indices32 = read_tarray(reader, r => reader.ReadUInt32())
+                //};
+
+                Console.WriteLine("loading active bone indices at " + reader.BaseStream.Position);
+                ActiveBoneIndices = read_tarray(reader, r => reader.ReadInt16());
+
+                // Chunks not read after version 0
+                Size = reader.ReadInt32();
+                NumVertices = flags.server_data_stripped ? 0 : reader.ReadInt32();
+
+                RequiredBones = read_tarray(reader, r => r.ReadInt16());
+
+                if (!flags.editor_data_stripped)
                 {
-                    throw new FileLoadException("Could not read FSkelMesh, no renderable data");
+                    RawPointIndices = new FIntBulkData();
+                    RawPointIndices.Skip(reader);
+                }
+                else
+                {
+                    RawPointIndices = default;
                 }
 
-                skin_weight_vertex_buffer = new FSkinWeightVertexBuffer(reader);
-                position_vertex_buffer = default;// new FPositionVertexBuffer(reader);
-                static_mesh_vertex_buffer = default;// new FStaticMeshVertexBuffer(reader);
-                skin_data = new FSkinWeightProfilesData(reader, name_map);
-                colour_vertex_buffer = default; // has_vertex_colors ? (FColorVertexBuffer?)new FColorVertexBuffer(reader) : null;
+                MeshToImportVertexMap = read_tarray(reader, r => r.ReadInt32());
+                MaxImportVertex = reader.ReadInt32();
+
+                // geometry
+                NumTexCoords = flags.server_data_stripped ? 0 : reader.ReadInt32();
+
+                if (has_vertex_colors)
+                {
+                    ColorVertexBuffer = new FSkeletalMeshVertexClothBuffer(reader);
+                }
+                else
+                {
+                    ColorVertexBuffer = default;
+                }
+
+                if (!flags.class_data_stripped(1))
+                {
+                    AdjacencyIndexBuffer = new FMultisizeIndexContainer(reader);
+                }
+                else
+                {
+                    AdjacencyIndexBuffer = default;
+                }
+
+                if (HasClothData(Sections))
+                {
+                    ClothVertexBuffer = new FSkeletalMeshVertexClothBuffer(reader);
+                }
+                else
+                {
+                    ClothVertexBuffer = default;
+                }
+
+                SkinWeightProfilesData = new FSkinWeightProfilesData(reader, name_map);
+            }
+
+            static bool HasClothData(FSkelMeshSection[] sections)
+            {
+                foreach (var s in sections)
+                    if (s.cloth_mapping_data.Length > 0)
+                        return true;
+                return false;
             }
         }
 
-        public struct FSkelMeshRenderSection
+        public struct FIntBulkData
+        {
+            public int BulkDataFlags;
+            public int ElementCount;
+            public long BulkDataOffsetInFile;
+            public int BulkDataSizeOnDisk;
+            public byte[] BulkData;
+
+            public bool bIsUE4Data;
+
+            public void Skip(BinaryReader reader)
+            {
+                SerializeHeader(reader);
+
+                if ((BulkDataFlags & 0x20) != 0) // BULKDATA_Unused
+                    return;
+
+                //UE4 specific flags
+                if ((BulkDataFlags & (0x0100 | 0x0001)) != 0) // BULKDATA_PayloadInSeperateFile | BULKDATA_PayloadAtEndOfFile
+                    return;
+                if ((BulkDataFlags & 0x0040) != 0) // BULKDATA_ForceInlinePayload
+                {
+                    reader.BaseStream.Seek(BulkDataSizeOnDisk, SeekOrigin.Current);
+                    return;
+                }
+
+                // unsure if this will work, umodel has a different starting position
+                if (BulkDataOffsetInFile == reader.BaseStream.Position)
+                {
+                    // really should check flags here, but checking position is simpler
+                    reader.BaseStream.Seek(BulkDataSizeOnDisk, SeekOrigin.Current);
+                }
+            }
+
+            public void SerializeHeader(BinaryReader reader)
+            {
+                bIsUE4Data = true;
+                BulkDataFlags = reader.ReadInt32();
+                ElementCount = reader.ReadInt32();
+                BulkDataSizeOnDisk = reader.ReadInt32();
+                BulkDataOffsetInFile = reader.ReadInt64();
+
+                // BulkDataOffsetInFile += Package->Summary.BulkDataStartOffset;
+                // adds the offset in the actual package summary (in the pak file)
+            }
+        }
+
+        public struct FSkelMeshChunk
+        {
+            public int BaseVertexIndex;
+            public FVertex[] RigidVerticies;
+            public FVertex[] SoftVertices;
+            public ushort[] BoneMap;
+            public int NumRigidVertices;
+            public int NumSoftVertices;
+            public int MaxBoneInfluences;
+            public bool HasClothData;
+        }
+
+        public struct FVertex
+        {
+            public FVector Pos;
+            public FPackedNormal[] Normal; // 3 length
+            public FSkinWeightInfo Infs;
+
+            public FMeshUVFloat[] UV; // 4 length
+            public FColor Color;
+
+            public static FVertex Soft(BinaryReader reader) => new FVertex
+            {
+                Pos = new FVector(reader),
+                Normal = new FPackedNormal[]
+                {
+                    new FVector(reader),
+                    new FVector(reader),
+                    new FVector4(reader)
+                },
+                UV = new FMeshUVFloat[]
+                {
+                    new FMeshUVFloat(reader),
+                    new FMeshUVFloat(reader),
+                    new FMeshUVFloat(reader),
+                    new FMeshUVFloat(reader)
+                },
+                Color = new FColor(reader),
+                Infs = new FSkinWeightInfo(reader)
+            };
+
+            public static FVertex Rigid(BinaryReader reader) => new FVertex
+            {
+                Pos = new FVector(reader),
+                Normal = new FPackedNormal[]
+                {
+                    new FVector(reader),
+                    new FVector(reader),
+                    new FVector4(reader)
+                },
+                UV = new FMeshUVFloat[]
+                {
+                    new FMeshUVFloat(reader),
+                    new FMeshUVFloat(reader),
+                    new FMeshUVFloat(reader),
+                    new FMeshUVFloat(reader)
+                },
+                Color = new FColor(reader),
+                Infs = new FSkinWeightInfo()
+                {
+                    bone_index = new byte[] { reader.ReadByte(), 0, 0, 0 },
+                    bone_weight = new byte[] { 255, 0, 0, 0 }
+                }
+            };
+        }
+
+        public struct FSkelMeshSection
         {
             public ushort material_index;
             public uint base_index;
             public uint num_triangles;
             public uint base_vertex_index;
-            public FMeshToMeshVertData[] cloth_mapping_data;
+            public FApexClothPhysToRenderVertData[] cloth_mapping_data;
             public ushort[] bone_map;
-            public uint num_vertices;
+            public int num_vertices;
             public int max_bone_influences;
             public FClothingSectionData clothing_data;
             public bool disabled;
 
-            internal FSkelMeshRenderSection(BinaryReader reader, FNameEntrySerialized[] name_map)
+            internal FSkelMeshSection(BinaryReader reader, FNameEntrySerialized[] name_map)
             {
                 var flags = new FStripDataFlags(reader);
+                Console.WriteLine("\nloading section item");
+                Console.WriteLine("loading section matind "+reader.BaseStream.Position);
                 material_index = reader.ReadUInt16();
+                Console.WriteLine("loading section baseind " + reader.BaseStream.Position);
                 base_index = reader.ReadUInt32();
+                Console.WriteLine("loading section trinum " + reader.BaseStream.Position);
                 num_triangles = reader.ReadUInt32();
 
+                Console.WriteLine("loading section comptan " + reader.BaseStream.Position);
                 var _recompute_tangent = reader.ReadUInt32() != 0;
+                Console.WriteLine("loading section castshadow " + reader.BaseStream.Position);
                 var _cast_shadow = reader.ReadUInt32() != 0;
+                Console.WriteLine("loading section basevertind " + reader.BaseStream.Position);
                 base_vertex_index = reader.ReadUInt32();
-                cloth_mapping_data = read_tarray(reader, r => new FMeshToMeshVertData(r));
+                Console.WriteLine("loading section clothmapdata " + reader.BaseStream.Position);
+                cloth_mapping_data = read_tarray(reader, r => new FApexClothPhysToRenderVertData(r));
+                bool HasClothData = cloth_mapping_data.Length > 0;
+
+                Console.WriteLine("loading section bonemap " + reader.BaseStream.Position);
                 bone_map = read_tarray(reader, r => r.ReadUInt16());
-                num_vertices = reader.ReadUInt32();
+                Console.WriteLine("loading section vertnum " + reader.BaseStream.Position);
+                num_vertices = reader.ReadInt32();
+                Console.WriteLine("loading section maxboneinflus " + reader.BaseStream.Position);
                 max_bone_influences = reader.ReadInt32();
-                Console.WriteLine(BitConverter.ToString(reader.ReadBytes(200)).Replace('-', ' '));
-                reader.BaseStream.Seek(-200, SeekOrigin.Current);
+                Console.WriteLine("loading section correspclothassetind " + reader.BaseStream.Position);
                 var _correspond_cloth_asset_index = reader.ReadInt16();
+                Console.WriteLine("loading section clothdat " + reader.BaseStream.Position);
                 clothing_data = new FClothingSectionData(reader);
+                Console.WriteLine("loading section dupvertbuf " + reader.BaseStream.Position);
                 var _vertex_buffer = new FDuplicatedVerticesBuffer(reader);
+                Console.WriteLine("loading section disabled " + reader.BaseStream.Position);
                 disabled = reader.ReadUInt32() != 0;
+            }
+        }
+
+        public struct FApexClothPhysToRenderVertData
+        {
+            public FVector4 PositionBaryCoordsAndDist;
+            public FVector4 NormalBaryCoordsAndDist;
+            public FVector4 TangentBaryCoordsAndDist;
+            public short[] SimulMeshVertIndices;
+            public int[] Padding;
+
+            public FApexClothPhysToRenderVertData(BinaryReader reader)
+            {
+                PositionBaryCoordsAndDist = new FVector4(reader);
+                NormalBaryCoordsAndDist = new FVector4(reader);
+                TangentBaryCoordsAndDist = new FVector4(reader);
+                SimulMeshVertIndices = new short[] { reader.ReadInt16(), reader.ReadInt16(), reader.ReadInt16(), reader.ReadInt16() };
+                Padding = new int[] { reader.ReadInt32(), reader.ReadInt32() };
+            }
+        }
+
+        public struct FVector4
+        {
+            public float X, Y, Z, W;
+
+            public FVector4(BinaryReader reader)
+            {
+                X = reader.ReadSingle();
+                Y = reader.ReadSingle();
+                Z = reader.ReadSingle();
+                W = reader.ReadSingle();
             }
         }
 
@@ -931,12 +1152,12 @@ namespace PakReader
 
         public struct FDuplicatedVerticesBuffer
         {
-            public uint[] dup_vert;
+            public int[] dup_vert;
             public FIndexLengthPair[] dup_vert_index;
 
             public FDuplicatedVerticesBuffer(BinaryReader reader)
             {
-                dup_vert = read_tarray(reader, r => r.ReadUInt32());
+                dup_vert = read_tarray(reader, r => r.ReadInt32());
                 dup_vert_index = read_tarray(reader, r => new FIndexLengthPair(reader));
             }
         }
@@ -999,20 +1220,22 @@ namespace PakReader
 
         public struct FMultisizeIndexContainer
         {
-            public byte data_size;
-            public object[] data;
+            public ushort[] Indices16;
+            public uint[] Indices32;
 
             public FMultisizeIndexContainer(BinaryReader reader)
             {
-                data_size = reader.ReadByte();
+                var data_size = reader.ReadByte();
                 var _element_size = reader.ReadInt32();
                 switch (data_size)
                 {
                     case 2:
-                        data = read_tarray(reader, r => (object)r.ReadUInt16());
+                        Indices16 = read_tarray(reader, r => r.ReadUInt16());
+                        Indices32 = null;
                         return;
                     case 4:
-                        data = read_tarray(reader, r => (object)r.ReadUInt32());
+                        Indices32 = read_tarray(reader, r => r.ReadUInt32());
+                        Indices16 = null;
                         return;
                     default:
                         throw new FileLoadException("No format size");
@@ -1039,30 +1262,139 @@ namespace PakReader
         {
             public int num_tex_coords;
             public int num_vertices;
-            public FStaticMeshVertexDataTangent? tangents;
-            public FStaticMeshVertexDataUV? uvs;
+            bool full_precision_uvs;
+            bool high_precision_tangent_basis;
+            public FStaticMeshUVItem4[] uv;
+            //public FStaticMeshVertexDataUV? uvs;
 
             public FStaticMeshVertexBuffer(BinaryReader reader)
             {
+                high_precision_tangent_basis = false;
+
                 var flags = new FStripDataFlags(reader);
 
                 num_tex_coords = reader.ReadInt32();
                 num_vertices = reader.ReadInt32();
-                var use_full_precision_uvs = reader.ReadInt32() != 0;
-                var use_high_precision_tangent = reader.ReadInt32() != 0;
+                full_precision_uvs = reader.ReadInt32() != 0;
+                high_precision_tangent_basis = reader.ReadInt32() != 0;
 
-                if (flags.server_data_stripped)
+                if (!flags.server_data_stripped)
                 {
-                    tangents = null;
-                    uvs = null;
-                    return;
+                    int ItemSize, ItemCount;
+                    uv = new FStaticMeshUVItem4[num_vertices];
+
+                    // Tangents
+                    ItemSize = reader.ReadInt32();
+                    ItemCount = reader.ReadInt32();
+                    if (ItemCount != num_vertices)
+                    {
+                        throw new FileLoadException("Invalid item count/num_vertices at pos " + reader.BaseStream.Position);
+                    }
+                    var pos = reader.BaseStream.Position;
+                    for(int i = 0; i < num_vertices; i++)
+                    {
+                        uv[i].SerializeTangents(reader, high_precision_tangent_basis);
+                    }
+                    if (reader.BaseStream.Position - pos != ItemCount * ItemSize)
+                    {
+                        throw new FileLoadException("Didn't read static mesh uvs correctly at pos " + reader.BaseStream.Position);
+                    }
+
+                    // Texture coordinates
+                    ItemSize = reader.ReadInt32();
+                    ItemCount = reader.ReadInt32();
+                    if (ItemCount != num_vertices * num_tex_coords)
+                    {
+                        throw new FileLoadException("Invalid item count/num_vertices at pos " + reader.BaseStream.Position);
+                    }
+                    pos = reader.BaseStream.Position;
+                    for (int i = 0; i < num_vertices; i++)
+                    {
+                        uv[i].SerializeTexcoords(reader, num_tex_coords, full_precision_uvs);
+                    }
+                    if (reader.BaseStream.Position - pos != ItemCount * ItemSize)
+                    {
+                        throw new FileLoadException("Didn't read static mesh texcoords correctly at pos " + reader.BaseStream.Position);
+                    }
                 }
+                else
+                {
+                    uv = null;
+                }
+            }
+        }
 
-                var _element_size = reader.ReadInt32();
-                tangents = new FStaticMeshVertexDataTangent(reader, use_high_precision_tangent);
+        public struct FStaticMeshUVItem4
+        {
+            FPackedNormal[] Normal;
+            FMeshUVFloat[] UV;
 
-                _element_size = reader.ReadInt32();
-                uvs = new FStaticMeshVertexDataUV(reader, use_high_precision_tangent);
+            public void SerializeTangents(BinaryReader reader, bool useHighPrecisionTangents)
+            {
+                Normal = new FPackedNormal[3];
+                if (!useHighPrecisionTangents)
+                {
+                    Normal[0] = new FPackedNormal(reader);
+                    Normal[2] = new FPackedNormal(reader);
+                }
+                else
+                {
+                    FPackedRGBA16N Normal, Tangent;
+                    Normal = new FPackedRGBA16N(reader);
+                    Tangent = new FPackedRGBA16N(reader);
+                    this.Normal[0] = Normal.ToPackedNormal();
+                    this.Normal[2] = Tangent.ToPackedNormal();
+                }
+            }
+
+            public void SerializeTexcoords(BinaryReader reader, int uvSets, bool useStaticFloatUVs)
+            {
+                UV = new FMeshUVFloat[8];
+                if (useStaticFloatUVs)
+                {
+                    for (int i = 0; i < uvSets; i++)
+                        UV[i] = new FMeshUVFloat(reader);
+                }
+                else
+                {
+                    for (int i = 0; i < uvSets; i++)
+                    {
+                        UV[i] = (FMeshUVFloat)new FMeshUVHalf(reader);
+                    }
+                }
+            }
+        }
+
+        public struct FMeshUVFloat
+        {
+            public float U;
+            public float V;
+
+            public FMeshUVFloat(BinaryReader reader)
+            {
+                U = reader.ReadSingle();
+                V = reader.ReadSingle();
+            }
+        }
+
+        struct FMeshUVHalf
+        {
+            public ushort U;
+            public ushort V;
+
+            public FMeshUVHalf(BinaryReader reader)
+            {
+                U = reader.ReadUInt16();
+                V = reader.ReadUInt16();
+            }
+
+            public static explicit operator FMeshUVFloat(FMeshUVHalf me)
+            {
+                return new FMeshUVFloat
+                {
+                    U = Extensions.HalfToFloat(me.U),
+                    V = Extensions.HalfToFloat(me.V)
+                };
             }
         }
 
@@ -1098,34 +1430,56 @@ namespace PakReader
 
         public struct FPackedRGBA16N
         {
-            public short x;
-            public short y;
-            public short z;
-            public short w;
+            public ushort X;
+            public ushort Y;
+            public ushort Z;
+            public ushort W;
 
             public FPackedRGBA16N(BinaryReader reader)
             {
-                x = reader.ReadInt16();
-                y = reader.ReadInt16();
-                z = reader.ReadInt16();
-                w = reader.ReadInt16();
+                X = reader.ReadUInt16();
+                Y = reader.ReadUInt16();
+                Z = reader.ReadUInt16();
+                W = reader.ReadUInt16();
+
+                X ^= 0x8000; // 4.20+: https://github.com/gildor2/UModel/blob/dcdb92c987c15f0a5d3366247667a8fb9fd8008b/Unreal/UnCore.h#L1290
+                Y ^= 0x8000;
+                Z ^= 0x8000;
+                W ^= 0x8000;
             }
+
+            public FPackedNormal ToPackedNormal() => new FVector
+            {
+                X = (X - 32767.5f) / 32767.5f,
+                Y = (Y - 32767.5f) / 32767.5f,
+                Z = (Z - 32767.5f) / 32767.5f
+            };
         }
 
         public struct FPackedNormal
         {
-            public byte x;
-            public byte y;
-            public byte z;
-            public byte w;
+            public uint Data;
 
             public FPackedNormal(BinaryReader reader)
             {
-                x = reader.ReadByte();
-                y = reader.ReadByte();
-                z = reader.ReadByte();
-                w = reader.ReadByte();
+                Data = reader.ReadUInt32();
+                Data ^= 0x80808080; // 4.20+: https://github.com/gildor2/UModel/blob/dcdb92c987c15f0a5d3366247667a8fb9fd8008b/Unreal/UnCore.h#L1216
             }
+
+            public static implicit operator FPackedNormal(FVector V) => new FPackedNormal
+            {
+                Data = (uint)((int)((V.X + 1) * 127.5f)
+                         + ((int)((V.Y + 1) * 127.5f) << 8)
+                         + ((int)((V.Z + 1) * 127.5f) << 16))
+            };
+
+            public static implicit operator FPackedNormal(FVector4 V) => new FPackedNormal
+            {
+                Data = (uint)((int)((V.X + 1) * 127.5f)
+                         + ((int)((V.Y + 1) * 127.5f) << 8)
+                         + ((int)((V.Z + 1) * 127.5f) << 16)
+                         + ((int)((V.W + 1) * 127.5f) << 24))
+            };
         }
 
         public struct FVector2DHalf
@@ -1144,39 +1498,41 @@ namespace PakReader
             }
         }
 
-        public struct FSkinWeightVertexBuffer
-        {
-            public FSkinWeightInfo[] weights;
-            public int num_vertices;
-
-            public FSkinWeightVertexBuffer(BinaryReader reader)
-            {
-                var flags = new FStripDataFlags(reader);
-
-                var extra_bone_influences = reader.ReadInt32() != 0;
-                num_vertices = reader.ReadInt32();
-
-                if (flags.server_data_stripped)
-                {
-                    weights = null;
-                    return;
-                }
-
-                var _element_size = reader.ReadInt32();
-                var num_influences = extra_bone_influences ? 8 : 4;
-                weights = read_tarray(reader, r => new FSkinWeightInfo(r, num_influences));
-            }
-        }
-
         public struct FSkinWeightInfo
         {
             public byte[] bone_index;
             public byte[] bone_weight;
 
-            public FSkinWeightInfo(BinaryReader reader, int max_influences)
+            public FSkinWeightInfo(BinaryReader reader)
             {
-                bone_index = reader.ReadBytes(max_influences);
-                bone_weight = reader.ReadBytes(max_influences);
+                bone_index = reader.ReadBytes(4); // NUM_INFLUENCES_UE4 = 4
+                bone_weight = reader.ReadBytes(4);
+            }
+        }
+
+        public struct FSkeletalMeshVertexClothBuffer
+        {
+            public ulong[] cloth_index_mapping;
+
+            public FSkeletalMeshVertexClothBuffer(BinaryReader reader)
+            {
+                var flags = new FStripDataFlags(reader);
+
+                if (!flags.server_data_stripped)
+                {
+                    // umodel: https://github.com/gildor2/UModel/blob/9a1fe8c77d136f018ba18c9e5c445fdcc5f374ae/Unreal/UnMesh4.cpp#L924
+                    //         https://github.com/gildor2/UModel/blob/39c635c13d61616297fb3e47f33e3fc20259626e/Unreal/UnCoreSerialize.cpp#L320
+                    // ue4: https://github.com/EpicGames/UnrealEngine/blob/master/Engine/Source/Runtime/Engine/Private/SkeletalMeshLODRenderData.cpp#L758
+                    //      https://github.com/EpicGames/UnrealEngine/blob/master/Engine/Source/Runtime/Engine/Public/Rendering/SkeletalMeshLODRenderData.h#L119
+
+                    int elem_size = reader.ReadInt32(); // umodel has this, might want to actually serialize this like how ue4 has it
+                    int count = reader.ReadInt32();
+                    reader.BaseStream.Seek(elem_size * count, SeekOrigin.Current);
+
+                    cloth_index_mapping = read_tarray(reader, r => r.ReadUInt64());
+                }
+
+                cloth_index_mapping = null;
             }
         }
 
@@ -1656,15 +2012,37 @@ namespace PakReader
 
     public struct FVector
     {
-        public float x;
-        public float y;
-        public float z;
+        public float X;
+        public float Y;
+        public float Z;
 
         internal FVector(BinaryReader reader)
         {
-            x = reader.ReadSingle();
-            y = reader.ReadSingle();
-            z = reader.ReadSingle();
+            X = reader.ReadSingle();
+            Y = reader.ReadSingle();
+            Z = reader.ReadSingle();
+        }
+
+
+
+        public static FVector operator -(FVector a, FVector b)
+        {
+            return new FVector
+            {
+                X = a.X - b.X,
+                Y = a.Y - b.Y,
+                Z = a.Z - b.Z
+            };
+        }
+
+        public static FVector operator +(FVector a, FVector b)
+        {
+            return new FVector
+            {
+                X = a.X + b.X,
+                Y = a.Y + b.Y,
+                Z = a.Z + b.Z
+            };
         }
     }
 
@@ -1928,9 +2306,9 @@ namespace PakReader
         {
             return new FVector
             {
-                x = ((val & X_MASK) - 511) / 511f * max.x + min.x,
-                y = (((val & Y_MASK) >> 10) - 1023) / 1023f * max.y + min.y,
-                z = ((val >> 21) - 1023) / 1023f * max.z + min.z
+                X = ((val & X_MASK) - 511) / 511f * max.X + min.X,
+                Y = (((val & Y_MASK) >> 10) - 1023) / 1023f * max.Y + min.Y,
+                Z = ((val >> 21) - 1023) / 1023f * max.Z + min.Z
             };
         }
 
@@ -1938,9 +2316,9 @@ namespace PakReader
         {
             var q = new FQuat
             {
-                x = ((val >> 21) - 1023) / 1023f * max.x + min.x,
-                y = (((val & Y_MASK) >> 10) - 1023) / 1023f * max.y + min.y,
-                z = ((val & X_MASK) - 511) / 511f * max.z + min.z,
+                x = ((val >> 21) - 1023) / 1023f * max.X + min.X,
+                y = (((val & Y_MASK) >> 10) - 1023) / 1023f * max.Y + min.Y,
+                z = ((val & X_MASK) - 511) / 511f * max.Z + min.Z,
                 w = 1
             };
             q.rebuild_w();
@@ -2005,18 +2383,18 @@ namespace PakReader
                         {
                             if ((header.component_mask & 1) != 0)
                             {
-                                min.x = reader.ReadSingle();
-                                max.x = reader.ReadSingle();
+                                min.X = reader.ReadSingle();
+                                max.X = reader.ReadSingle();
                             }
                             if ((header.component_mask & 2) != 0)
                             {
-                                min.y = reader.ReadSingle();
-                                max.y = reader.ReadSingle();
+                                min.Y = reader.ReadSingle();
+                                max.Y = reader.ReadSingle();
                             }
                             if ((header.component_mask & 4) != 0)
                             {
-                                min.z = reader.ReadSingle();
-                                max.z = reader.ReadSingle();
+                                min.Z = reader.ReadSingle();
+                                max.Z = reader.ReadSingle();
                             }
                         }
 
@@ -2030,9 +2408,9 @@ namespace PakReader
                                     var fvec = new FVector();
                                     if ((header.component_mask & 7) != 0)
                                     {
-                                        if ((header.component_mask & 1) != 0) fvec.x = reader.ReadSingle();
-                                        if ((header.component_mask & 2) != 0) fvec.y = reader.ReadSingle();
-                                        if ((header.component_mask & 4) != 0) fvec.z = reader.ReadSingle();
+                                        if ((header.component_mask & 1) != 0) fvec.X = reader.ReadSingle();
+                                        if ((header.component_mask & 2) != 0) fvec.Y = reader.ReadSingle();
+                                        if ((header.component_mask & 4) != 0) fvec.Z = reader.ReadSingle();
                                     }
                                     else
                                     {
@@ -2042,9 +2420,9 @@ namespace PakReader
                                     break;
                                 case AnimationCompressionFormat.Fixed48NoW:
                                     fvec = new FVector();
-                                    if ((header.component_mask & 1) != 0) fvec.x = read_fixed48(reader.ReadUInt16());
-                                    if ((header.component_mask & 2) != 0) fvec.y = read_fixed48(reader.ReadUInt16());
-                                    if ((header.component_mask & 4) != 0) fvec.z = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 1) != 0) fvec.X = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 2) != 0) fvec.Y = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 4) != 0) fvec.Z = read_fixed48(reader.ReadUInt16());
                                     track.translation[j] = fvec;
                                     break;
                                 case AnimationCompressionFormat.IntervalFixed32NoW:
@@ -2071,18 +2449,18 @@ namespace PakReader
                         {
                             if ((header.component_mask & 1) != 0)
                             {
-                                min.x = reader.ReadSingle();
-                                max.x = reader.ReadSingle();
+                                min.X = reader.ReadSingle();
+                                max.X = reader.ReadSingle();
                             }
                             if ((header.component_mask & 2) != 0)
                             {
-                                min.y = reader.ReadSingle();
-                                max.y = reader.ReadSingle();
+                                min.Y = reader.ReadSingle();
+                                max.Y = reader.ReadSingle();
                             }
                             if ((header.component_mask & 4) != 0)
                             {
-                                min.z = reader.ReadSingle();
-                                max.z = reader.ReadSingle();
+                                min.Z = reader.ReadSingle();
+                                max.Z = reader.ReadSingle();
                             }
                         }
 
@@ -2096,9 +2474,9 @@ namespace PakReader
                                     var fvec = new FVector();
                                     if ((header.component_mask & 7) != 0)
                                     {
-                                        if ((header.component_mask & 1) != 0) fvec.x = reader.ReadSingle();
-                                        if ((header.component_mask & 2) != 0) fvec.y = reader.ReadSingle();
-                                        if ((header.component_mask & 4) != 0) fvec.z = reader.ReadSingle();
+                                        if ((header.component_mask & 1) != 0) fvec.X = reader.ReadSingle();
+                                        if ((header.component_mask & 2) != 0) fvec.Y = reader.ReadSingle();
+                                        if ((header.component_mask & 4) != 0) fvec.Z = reader.ReadSingle();
                                     }
                                     else
                                     {
@@ -2106,9 +2484,9 @@ namespace PakReader
                                     }
                                     var fquat = new FQuat()
                                     {
-                                        x = fvec.x,
-                                        y = fvec.y,
-                                        z = fvec.z
+                                        x = fvec.X,
+                                        y = fvec.Y,
+                                        z = fvec.Z
                                     };
                                     fquat.rebuild_w();
                                     track.rotation[j] = fquat;
@@ -2145,18 +2523,18 @@ namespace PakReader
                         {
                             if ((header.component_mask & 1) != 0)
                             {
-                                min.x = reader.ReadSingle();
-                                max.x = reader.ReadSingle();
+                                min.X = reader.ReadSingle();
+                                max.X = reader.ReadSingle();
                             }
                             if ((header.component_mask & 2) != 0)
                             {
-                                min.y = reader.ReadSingle();
-                                max.y = reader.ReadSingle();
+                                min.Y = reader.ReadSingle();
+                                max.Y = reader.ReadSingle();
                             }
                             if ((header.component_mask & 4) != 0)
                             {
-                                min.z = reader.ReadSingle();
-                                max.z = reader.ReadSingle();
+                                min.Z = reader.ReadSingle();
+                                max.Z = reader.ReadSingle();
                             }
                         }
 
@@ -2170,9 +2548,9 @@ namespace PakReader
                                     var fvec = new FVector();
                                     if ((header.component_mask & 7) != 0)
                                     {
-                                        if ((header.component_mask & 1) != 0) fvec.x = reader.ReadSingle();
-                                        if ((header.component_mask & 2) != 0) fvec.y = reader.ReadSingle();
-                                        if ((header.component_mask & 4) != 0) fvec.z = reader.ReadSingle();
+                                        if ((header.component_mask & 1) != 0) fvec.X = reader.ReadSingle();
+                                        if ((header.component_mask & 2) != 0) fvec.Y = reader.ReadSingle();
+                                        if ((header.component_mask & 4) != 0) fvec.Z = reader.ReadSingle();
                                     }
                                     else
                                     {
@@ -2182,9 +2560,9 @@ namespace PakReader
                                     break;
                                 case AnimationCompressionFormat.Fixed48NoW:
                                     fvec = new FVector();
-                                    if ((header.component_mask & 1) != 0) fvec.x = read_fixed48(reader.ReadUInt16());
-                                    if ((header.component_mask & 2) != 0) fvec.y = read_fixed48(reader.ReadUInt16());
-                                    if ((header.component_mask & 4) != 0) fvec.z = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 1) != 0) fvec.X = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 2) != 0) fvec.Y = read_fixed48(reader.ReadUInt16());
+                                    if ((header.component_mask & 4) != 0) fvec.Z = read_fixed48(reader.ReadUInt16());
                                     track.scale[j] = fvec;
                                     break;
                                 case AnimationCompressionFormat.IntervalFixed32NoW:
@@ -2240,6 +2618,7 @@ namespace PakReader
 
         internal USkeletalMesh(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
+            Console.WriteLine("reading skelmesh at " + reader.BaseStream.Position);
             super_object = new UObject(reader, name_map, import_map, "SkeletalMesh", true);
             bool has_vertex_colors = false;
             foreach (var prop in super_object.properties)
@@ -2250,9 +2629,13 @@ namespace PakReader
                     break;
                 }
             }
+            Console.WriteLine("reading flags at " + reader.BaseStream.Position);
             var flags = new FStripDataFlags(reader);
+            Console.WriteLine("reading bounds at " + reader.BaseStream.Position);
             imported_bounds = new FBoxSphereBounds(reader);
+            Console.WriteLine("reading mats lol at " + reader.BaseStream.Position);
             materials = read_tarray(reader, r => new FSkeletalMaterial(r, name_map, import_map));
+            Console.WriteLine("reading refskel at " + reader.BaseStream.Position);
             ref_skeleton = new FReferenceSkeleton(reader, name_map);
 
             if (!flags.editor_data_stripped)
@@ -2264,6 +2647,7 @@ namespace PakReader
             {
                 throw new FileLoadException("No cooked data");
             }
+            Console.WriteLine("reading models at " + reader.BaseStream.Position);
             lod_models = read_tarray(reader, r => new FSkeletalMeshRenderData(r, name_map, has_vertex_colors));
 
             reader.ReadUInt32(); // serialize_guid

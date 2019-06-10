@@ -32,9 +32,12 @@ namespace PakReader
                     package.ubulk = entry;
                     package.BulkReader = reader;
                     break;
-                case "ini":
-                    package.ini = entry;
-                    package.IniReader = reader;
+                default:
+                    if (package.Other == null)
+                    {
+                        package.Other = new SortedList<string, (BasePakEntry Entry, PakReader Reader)>();
+                    }
+                    package.Other.Add(extension, (entry, reader));
                     break;
             }
             return package;
@@ -75,12 +78,13 @@ namespace PakReader
         public BasePakEntry uasset;
         public BasePakEntry uexp;
         public BasePakEntry ubulk;
-        public BasePakEntry ini;
 
         public PakReader AssetReader;
         public PakReader ExpReader;
         public PakReader BulkReader;
-        public PakReader IniReader;
+
+        public SortedList<string, (BasePakEntry Entry, PakReader Reader)> Other;
+
         public ExportObject[] Exports
         {
             get
