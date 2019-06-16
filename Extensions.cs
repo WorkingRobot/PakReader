@@ -39,13 +39,13 @@ namespace PakReader
             }
         }
 
-        public static T[] ReadTArray<T>(this BinaryReader reader, Func<BinaryReader, T> getter)
+        public static T[] ReadTArray<T>(this BinaryReader reader, Func<T> getter)
         {
             int length = reader.ReadInt32();
             T[] container = new T[length];
             for (int i = 0; i < length; i++)
             {
-                container[i] = getter(reader);
+                container[i] = getter();
             }
             return container;
         }
@@ -66,6 +66,12 @@ namespace PakReader
             exp = exp + (127 - 15);
             uint df = (uint)(sign << 31) | (uint)(exp << 23) | (uint)(mant << 13);
             return BitConverter.ToSingle(BitConverter.GetBytes(df), 0);
+        }
+
+        public static void StrCpy(byte[] dst, string name, int offset = 0)
+        {
+            byte[] src = Encoding.ASCII.GetBytes(name);
+            Buffer.BlockCopy(src, 0, dst, offset, src.Length);
         }
     }
 }

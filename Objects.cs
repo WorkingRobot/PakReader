@@ -244,7 +244,7 @@ namespace PakReader
             {
                 if (CompressionMethod != 0)
                 {
-                    /*CompressionBlocks = */reader.ReadTArray(r => new FPakCompressedBlock(r));
+                    /*CompressionBlocks = */reader.ReadTArray(() => new FPakCompressedBlock(reader));
                 }
                 Encrypted = reader.ReadBoolean();
                 /* CompressionBlockSize = */reader.ReadInt32();
@@ -372,19 +372,19 @@ namespace PakReader
             if (LegacyVersion == -2)
             {
                 // Before 4.0 release: ECustomVersionSerializationFormat::Enums in Core/Private/Serialization/CustomVersion.cpp
-                FEnumCustomVersion[] VersionsEnum = reader.ReadTArray(r => new FEnumCustomVersion(r));
+                FEnumCustomVersion[] VersionsEnum = reader.ReadTArray(() => new FEnumCustomVersion(reader));
                 Versions = null;
             }
             else if (LegacyVersion < -2 && LegacyVersion >= -5)
             {
                 // 4.0 .. 4.10: ECustomVersionSerializationFormat::Guids
-                FGuidCustomVersion[] VersionsGuid = reader.ReadTArray(r => new FGuidCustomVersion(r));
+                FGuidCustomVersion[] VersionsGuid = reader.ReadTArray(() => new FGuidCustomVersion(reader));
                 Versions = null;
             }
             else
             {
                 // Starting with 4.11: ECustomVersionSerializationFormat::Optimized
-                Versions = reader.ReadTArray(r => new FCustomVersion(r));
+                Versions = reader.ReadTArray(() => new FCustomVersion(reader));;
             }
         }
     }
@@ -699,11 +699,11 @@ namespace PakReader
 
             // compression structures
             CompressionFlags = reader.ReadInt32();
-            CompressedChunks = reader.ReadTArray(r => new FCompressedChunk(r));
+            CompressedChunks = reader.ReadTArray(() => new FCompressedChunk(reader));
 
             int PackageSource = reader.ReadInt32();
 
-            string[] AdditionalPackagesToCook = reader.ReadTArray(r => r.ReadString());
+            string[] AdditionalPackagesToCook = reader.ReadTArray(() => reader.ReadString());
 
             if (LegacyVersion > -7)
             {

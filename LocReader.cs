@@ -68,7 +68,7 @@ namespace PakReader
                     {
                         long CurrentFileOffset = reader.BaseStream.Position;
                         reader.BaseStream.Seek(LocalizedStringArrayOffset, SeekOrigin.Begin);
-                        LocalizedStringArray = AssetReader.read_tarray(reader, r => new FTextLocalizationResourceString(r));
+                        LocalizedStringArray = reader.ReadTArray(() => new FTextLocalizationResourceString(reader));
                         reader.BaseStream.Seek(CurrentFileOffset, SeekOrigin.Begin);
                     }
                     else
@@ -77,7 +77,7 @@ namespace PakReader
                         
                         long CurrentFileOffset = reader.BaseStream.Position;
                         reader.BaseStream.Seek(LocalizedStringArrayOffset, SeekOrigin.Begin);
-                        TmpLocalizedStringArray = AssetReader.read_tarray(reader, r => CleanString(AssetReader.read_string(r)));
+                        TmpLocalizedStringArray = reader.ReadTArray(() => CleanString(AssetReader.read_string(reader)));
                         reader.BaseStream.Seek(CurrentFileOffset, SeekOrigin.Begin);
 
                         LocalizedStringArray = new FTextLocalizationResourceString[TmpLocalizedStringArray.Length];

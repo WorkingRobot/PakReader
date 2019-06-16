@@ -112,11 +112,7 @@ namespace PakReader
 
         public SKImage GetTexture()
         {
-            if (Exports[0] is Texture2D tex)
-            {
-                return ImageExporter.GetImage(tex.textures[0].mips[0], tex.textures[0].pixel_format);
-            }
-            return null;
+            return Exports[0] is Texture2D tex ? ImageExporter.GetImage(tex.textures[0].mips[0], tex.textures[0].pixel_format) : null;
         }
     }
 }
