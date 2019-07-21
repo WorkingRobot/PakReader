@@ -18,28 +18,7 @@ namespace PakReader
 
         static PakPackage InsertEntry(BasePakEntry entry, PakPackage package, string extension, PakReader reader)
         {
-            switch (extension)
-            {
-                case "uasset":
-                    package.uasset = entry;
-                    package.AssetReader = reader;
-                    break;
-                case "uexp":
-                    package.uexp = entry;
-                    package.ExpReader = reader;
-                    break;
-                case "ubulk":
-                    package.ubulk = entry;
-                    package.BulkReader = reader;
-                    break;
-                default:
-                    if (package.Other == null)
-                    {
-                        package.Other = new SortedList<string, (BasePakEntry Entry, PakReader Reader)>();
-                    }
-                    package.Other.Add(extension, (entry, reader));
-                    break;
-            }
+            package.Extensions[extension] = (entry, reader);
             return package;
         }
 
@@ -51,11 +30,12 @@ namespace PakReader
                 var path = GetPath(info.Name);
                 if (!index.ContainsKey(path.Path))
                 {
-                    index[path.Path] = InsertEntry(info, new PakPackage(), path.Extension, reader);
+                    var pak = index[path.Path] = new PakPackage();
+                    InsertEntry(info, pak, path.Extension, reader);
                 }
                 else
                 {
-                    index[path.Path] = InsertEntry(info, index[path.Path], path.Extension, reader);
+                    InsertEntry(info, index[path.Path], path.Extension, reader);
                 }
             }
         }
@@ -73,40 +53,22 @@ namespace PakReader
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    public class PakPackage
+    public sealed class PakPackage
     {
-        public BasePakEntry uasset;
-        public BasePakEntry uexp;
-        public BasePakEntry ubulk;
+        public SortedList<string, (BasePakEntry Entry, PakReader Reader)> Extensions = new SortedList<string, (BasePakEntry Entry, PakReader Reader)>();
 
-        public PakReader AssetReader;
-        public PakReader ExpReader;
-        public PakReader BulkReader;
+        public ExportObject[] Exports => GetAssetReader(true)?.Exports;
 
-        public SortedList<string, (BasePakEntry Entry, PakReader Reader)> Other;
+        public AssetReader GetAssetReader(bool ignoreErrors = false) => Exportable ? new AssetReader(GetPackageStream("uasset"), GetPackageStream("uexp"), GetPackageStream("ubulk"), ignoreErrors) : null;
 
-        public ExportObject[] Exports
-        {
-            get
-            {
-                return new AssetReader(
-                    AssetReader.GetPackageStream(uasset),
-                    ExpReader.GetPackageStream(uexp),
-                    ubulk == null ? null : BulkReader.GetPackageStream(ubulk)
-                ).Exports;
-            }
-        }
+        public bool Exportable => HasExtension("uasset") && HasExtension("uexp");
 
-        public void SaveFiles() // debugging purposes
-        {
-            using (var f = File.OpenWrite("out.uasset"))
-                AssetReader.GetPackageStream(uasset).CopyTo(f);
-            using (var f = File.OpenWrite("out.uexp"))
-                ExpReader.GetPackageStream(uexp).CopyTo(f);
-            if (ubulk != null)
-                using (var f = File.OpenWrite("out.ubulk"))
-                    BulkReader.GetPackageStream(ubulk).CopyTo(f);
-        }
+        public bool HasExtension(string extension) => Extensions.ContainsKey(extension);
+
+        public Stream GetPackageStream(string extension) =>
+            Extensions.TryGetValue(extension, out var ext) ?
+                ext.Reader.GetPackageStream(ext.Entry) :
+                null;
 
         public UObject GetUObject() => Exports[0] as UObject;
 
