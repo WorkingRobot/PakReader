@@ -29,6 +29,18 @@ namespace PakReader
                     decoded = DecodeBC5(inp.data.data, inp.size_x, inp.size_y);
                     color = SKColorType.Rgb888x;
                     break;
+                case "PF_BC4":
+                    decoded = DecodeBC4(inp.data.data, inp.size_x, inp.size_y);
+                    color = SKColorType.Rgb888x;
+                    break;
+                case "PF_G8":
+                    decoded = inp.data.data;
+                    color = SKColorType.Gray8;
+                    break;
+                case "PF_FloatRGBA":
+                    decoded = inp.data.data;
+                    color = SKColorType.RgbaF16;
+                    break;
                 default:
                     throw new IOException("Unknown image type: " + pixel_format);
             }
@@ -42,16 +54,26 @@ namespace PakReader
                         bitmap.SetPixels(new IntPtr(p));
                     }
                 }
-
-                return SKImage.FromBitmap(bitmap);/*
-                using (var b = bitmap.Resize(new SKImageInfo(256, 256), SKBitmapResizeMethod.Lanczos3))
-                {
-                    var img = SKImage.FromBitmap(b);
-                    //string filename = RandomString(8) + ".png";
-                    //File.WriteAllBytes(filename, img.Encode().ToArray());
-                    //Console.WriteLine(filename);
-                }*/
+                return SKImage.FromBitmap(bitmap);
             }
+        }
+
+        static byte[] DecodeBC4(byte[] inp, int width, int height)
+        {
+            byte[] ret = new byte[width * height * 4];
+            BinaryReader reader = new BinaryReader(new MemoryStream(inp));
+            for (int y_block = 0; y_block < height / 4; y_block++)
+            {
+                for (int x_block = 0; x_block < width / 4; x_block++)
+                {
+                    var r_bytes = DecodeBC3Block(reader);
+                    for (int i = 0; i < 16; i++)
+                    {
+                        ret[GetPixelLoc(width, x_block * 4 + (i % 4), y_block * 4 + (i / 4), 4, 0)] = r_bytes[i];
+                    }
+                }
+            }
+            return ret;
         }
 
         static byte[] DecodeBC5(byte[] inp, int width, int height)
@@ -67,16 +89,16 @@ namespace PakReader
 
                     for (int i = 0; i < 16; i++)
                     {
-                        ret[GetPixelLoc(width, x_block * 4 + (i % 4), y_block * 4 + (i / 4), 0)] = r_bytes[i];
-                        ret[GetPixelLoc(width, x_block * 4 + (i % 4), y_block * 4 + (i / 4), 1)] = g_bytes[i];
-                        ret[GetPixelLoc(width, x_block * 4 + (i % 4), y_block * 4 + (i / 4), 2)] = GetZNormal(r_bytes[i], g_bytes[i]);
+                        ret[GetPixelLoc(width, x_block * 4 + (i % 4), y_block * 4 + (i / 4), 4, 0)] = r_bytes[i];
+                        ret[GetPixelLoc(width, x_block * 4 + (i % 4), y_block * 4 + (i / 4), 4, 1)] = g_bytes[i];
+                        ret[GetPixelLoc(width, x_block * 4 + (i % 4), y_block * 4 + (i / 4), 4, 2)] = GetZNormal(r_bytes[i], g_bytes[i]);
                     }
                 }
             }
             return ret;
         }
 
-        static int GetPixelLoc(int width, int x, int y, int off) => (y * width + x) * 4 + off;
+        static int GetPixelLoc(int width, int x, int y, int bpp, int off) => (y * width + x) * bpp + off;
 
         static byte GetZNormal(byte x, byte y)
         {
