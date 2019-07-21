@@ -13,7 +13,7 @@ namespace PakReader
             {
                 throw new IOException($"String length too large ({length}), likely a read error.");
             }
-            if (maxLength != 0 && Math.Abs(length) > maxLength)
+            if (maxLength != -1 && Math.Abs(length) > maxLength)
             {
                 throw new ArgumentOutOfRangeException("String exceeded max length");
             }

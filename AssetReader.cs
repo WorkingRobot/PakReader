@@ -13,11 +13,11 @@ namespace PakReader
     {
         public readonly ExportObject[] Exports;
 
-        public AssetReader(string path, bool ubulk = false) : this(path + ".uasset", path + ".uexp", ubulk ? path + ".ubulk" : null) { }
+        public AssetReader(string path, bool ubulk = false, bool ignoreErrors = true) : this(path + ".uasset", path + ".uexp", ubulk ? path + ".ubulk" : null, ignoreErrors) { }
 
-        public AssetReader(string assetPath, string expPath, string bulkPath) : this(File.OpenRead(assetPath), File.OpenRead(expPath), bulkPath == null ? null : File.OpenRead(bulkPath)) { }
+        public AssetReader(string assetPath, string expPath, string bulkPath, bool ignoreErrors = true) : this(File.OpenRead(assetPath), File.OpenRead(expPath), bulkPath == null ? null : File.OpenRead(bulkPath), ignoreErrors) { }
 
-        public AssetReader(Stream asset, Stream exp, Stream bulk = null)
+        public AssetReader(Stream asset, Stream exp, Stream bulk = null, bool ignoreErrors = true)
         {
             BinaryReader reader = new BinaryReader(asset);
             var summary = new AssetSummary(reader);
@@ -59,42 +59,50 @@ namespace PakReader
                 string export_type = v.class_index.import;
                 long position = v.serial_offset - asset.Length;
                 reader.BaseStream.Seek(position, SeekOrigin.Begin);
-                switch (export_type)
+                try
                 {
-                    case "Texture2D":
-                        Exports[ind] = new Texture2D(reader, name_map, import_map, asset_length, export_size, bulkReader);
-                        break;
-                    case "FontFace":
-                        Exports[ind] = new FontFace(reader, name_map, import_map);
-                        break;
-                    case "DataTable":
-                        Exports[ind] = new UDataTable(reader, name_map, import_map);
-                        break;
-                    case "CurveTable":
-                        Exports[ind] = new UCurveTable(reader, name_map, import_map);
-                        break;
-                    case "SkeletalMesh":
-                        Exports[ind] = new USkeletalMesh(reader, name_map, import_map);
-                        break;
-                    case "AnimSequence":
-                        Exports[ind] = new UAnimSequence(reader, name_map, import_map);
-                        break;
-                    case "Skeleton":
-                        Exports[ind] = new USkeleton(reader, name_map, import_map);
-                        break;
-                    case "MaterialInstanceConstant":
-                        Exports[ind] = new Material(reader, name_map, import_map);
-                        break;
-                    default:
-                        Exports[ind] = new UObject(reader, name_map, import_map, export_type, true);
-                        break;
+                    switch (export_type)
+                    {
+                        case "Texture2D":
+                            Exports[ind] = new Texture2D(reader, name_map, import_map, asset_length, export_size, bulkReader);
+                            break;
+                        case "FontFace":
+                            Exports[ind] = new FontFace(reader, name_map, import_map);
+                            break;
+                        case "DataTable":
+                            Exports[ind] = new UDataTable(reader, name_map, import_map);
+                            break;
+                        case "CurveTable":
+                            Exports[ind] = new UCurveTable(reader, name_map, import_map);
+                            break;
+                        case "SkeletalMesh":
+                            Exports[ind] = new USkeletalMesh(reader, name_map, import_map);
+                            break;
+                        case "AnimSequence":
+                            Exports[ind] = new UAnimSequence(reader, name_map, import_map);
+                            break;
+                        case "Skeleton":
+                            Exports[ind] = new USkeleton(reader, name_map, import_map);
+                            break;
+                        case "Material":
+                        case "MaterialInstanceConstant":
+                            Exports[ind] = new UMaterial(reader, name_map, import_map);
+                            break;
+                        default:
+                            Exports[ind] = new UObject(reader, name_map, import_map, export_type, true);
+                            break;
+                    }
+                }
+                catch (Exception e)
+                {
+                    if (!ignoreErrors)
+                        throw e;
                 }
                 long valid_pos = position + v.serial_size;
                 if (reader.BaseStream.Position != valid_pos)
                 {
                     Console.WriteLine($"Did not read {export_type} correctly. Current Position: {reader.BaseStream.Position}, Bytes Remaining: {valid_pos - reader.BaseStream.Position}");
                     reader.BaseStream.Seek(valid_pos, SeekOrigin.Begin);
-                    //throw new IOException($"Did not read {export_type} correctly. Current Position: {reader.BaseStream.Position}, Bytes Remaining: {valid_pos - reader.BaseStream.Position}");
                 }
                 ind++;
             }
@@ -168,7 +176,6 @@ namespace PakReader
 
         internal static string read_fname(BinaryReader reader, FNameEntrySerialized[] name_map)
         {
-            //long index_pos = reader.BaseStream.Position;
             int name_index = reader.ReadInt32();
             reader.ReadInt32();
             return name_map[name_index].data;
@@ -199,25 +206,13 @@ namespace PakReader
 
         internal static FPropertyTag read_property_tag(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, bool read_data)
         {
-            string name, property_type;
-            try
-            {
-                name = read_fname(reader, name_map);
-                if (name == "None")
-                {
-                    return default;
-                }
-                property_type = read_fname(reader, name_map).Trim();
-            }
-            catch (EndOfStreamException)
-            {
-                return default;
-            }
-            catch (IndexOutOfRangeException)
+            string name = read_fname(reader, name_map);
+            if (name == "None")
             {
                 return default;
             }
 
+            string property_type = read_fname(reader, name_map).Trim();
             int size = reader.ReadInt32();
             int array_index = reader.ReadInt32();
 
@@ -244,11 +239,6 @@ namespace PakReader
                     break;
                 case "SetProperty":
                     tag_data = read_fname(reader, name_map);
-                    break;
-                case "StrProperty":
-                    reader.ReadByte();
-                    tag_data = read_string(reader);
-                    reader.BaseStream.Seek(-1, SeekOrigin.Current);
                     break;
                 default:
                     tag_data = null;
@@ -563,7 +553,7 @@ namespace PakReader
                 pixel_format = read_string(reader);
                 first_mip = reader.ReadInt32();
                 mips = new FTexture2DMipMap[reader.ReadUInt32()];
-                for(int i = 0; i < mips.Length; i++)
+                for (int i = 0; i < mips.Length; i++)
                 {
                     mips[i] = new FTexture2DMipMap(reader, ubulk, bulk_offset);
                 }
@@ -689,7 +679,7 @@ namespace PakReader
                 ref_bone_pose = reader.ReadTArray(() => new FTransform(reader));
 
                 name_to_index = new (string, int)[reader.ReadUInt32()];
-                for(int i = 0; i < name_to_index.Length; i++)
+                for (int i = 0; i < name_to_index.Length; i++)
                 {
                     name_to_index[i] = (read_fname(reader, name_map), reader.ReadInt32());
                 }
@@ -779,7 +769,7 @@ namespace PakReader
                 initialized = reader.ReadUInt32() != 0;
                 override_densities = reader.ReadUInt32() != 0;
                 local_uv_densities = new float[4];
-                for(int i = 0; i < 4; i++)
+                for (int i = 0; i < 4; i++)
                 {
                     local_uv_densities[i] = reader.ReadSingle();
                 }
@@ -825,7 +815,7 @@ namespace PakReader
                 {
                     throw new FileLoadException("Could not read FSkelMesh, no renderable data");
                 }
-                
+
                 var position_vertex_buffer = new FPositionVertexBuffer(reader);
                 var static_mesh_vertex_buffer = new FStaticMeshVertexBuffer(reader);
                 var skin_weight_vertex_buffer = new FSkinWeightVertexBuffer(reader);
@@ -846,7 +836,7 @@ namespace PakReader
                 {
                     ClothVertexBuffer = new FSkeletalMeshVertexClothBuffer(reader);
                 }
-                
+
                 SkinWeightProfilesData = new FSkinWeightProfilesData(reader, name_map);
 
                 VertexBufferGPUSkin = new FSkeletalMeshVertexBuffer();
@@ -855,7 +845,7 @@ namespace PakReader
                 NumTexCoords = static_mesh_vertex_buffer.num_tex_coords;
 
                 VertexBufferGPUSkin.VertsFloat = new FGPUVert4Float[NumVertices];
-                for(int i = 0; i < NumVertices; i++)
+                for (int i = 0; i < NumVertices; i++)
                 {
                     var V = new FGPUVert4Float();
                     var SV = static_mesh_vertex_buffer.uv[i];
@@ -1003,13 +993,13 @@ namespace PakReader
                 material_index = reader.ReadUInt16();
                 base_index = reader.ReadUInt32();
                 num_triangles = reader.ReadUInt32();
-                
+
                 var _recompute_tangent = reader.ReadUInt32() != 0;
                 var _cast_shadow = reader.ReadUInt32() != 0;
                 base_vertex_index = reader.ReadUInt32();
                 cloth_mapping_data = reader.ReadTArray(() => new FApexClothPhysToRenderVertData(reader));
                 bool HasClothData = cloth_mapping_data.Length > 0;
-                
+
                 bone_map = reader.ReadTArray(() => reader.ReadUInt16());
                 num_vertices = reader.ReadInt32();
                 max_bone_influences = reader.ReadInt32();
@@ -1109,7 +1099,7 @@ namespace PakReader
             internal FSkinWeightProfilesData(BinaryReader reader, FNameEntrySerialized[] name_map)
             {
                 override_data = new (string, FRuntimeSkinWeightProfileData)[reader.ReadInt32()];
-                for(int i = 0; i < override_data.Length; i++)
+                for (int i = 0; i < override_data.Length; i++)
                 {
                     override_data[i] = (read_fname(reader, name_map), new FRuntimeSkinWeightProfileData(reader));
                 }
@@ -1127,7 +1117,7 @@ namespace PakReader
                 overrides_info = reader.ReadTArray(() => new FSkinWeightOverrideInfo(reader));
                 weights = reader.ReadTArray(() => reader.ReadUInt16());
                 vertex_index_override_index = new (uint, uint)[reader.ReadInt32()];
-                for(int i = 0; i < vertex_index_override_index.Length; i++)
+                for (int i = 0; i < vertex_index_override_index.Length; i++)
                 {
                     vertex_index_override_index[i] = (reader.ReadUInt32(), reader.ReadUInt32());
                 }
@@ -1231,7 +1221,7 @@ namespace PakReader
                         throw new FileLoadException("Invalid item count/num_vertices at pos " + reader.BaseStream.Position);
                     }
                     var pos = reader.BaseStream.Position;
-                    for(int i = 0; i < num_vertices; i++)
+                    for (int i = 0; i < num_vertices; i++)
                     {
                         uv[i].SerializeTangents(reader, high_precision_tangent_basis);
                     }
@@ -1636,6 +1626,52 @@ namespace PakReader
             }
         }
 
+        internal struct FRichCurveKey
+        {
+            public byte interp_mode;
+            public byte tangent_mode;
+            public byte tangent_weight_mode;
+            public float time;
+            public float arrive_tangent;
+            public float arrive_tangent_weight;
+            public float leave_tangent;
+            public float leave_tangent_weight;
+
+            public FRichCurveKey(BinaryReader reader)
+            {
+                interp_mode = reader.ReadByte();
+                tangent_mode = reader.ReadByte();
+                tangent_weight_mode = reader.ReadByte();
+                time = reader.ReadSingle();
+                arrive_tangent = reader.ReadSingle();
+                arrive_tangent_weight = reader.ReadSingle();
+                leave_tangent = reader.ReadSingle();
+                leave_tangent_weight = reader.ReadSingle();
+            }
+        }
+
+        internal struct FSimpleCurveKey
+        {
+            public float time;
+            public float value;
+
+            public FSimpleCurveKey(BinaryReader reader)
+            {
+                time = reader.ReadSingle();
+                value = reader.ReadSingle();
+            }
+        }
+
+        internal struct FDateTime
+        {
+            public long date;
+
+            public FDateTime(BinaryReader reader)
+            {
+                date = reader.ReadInt64();
+            }
+        }
+
         internal struct FEntry
         {
             public int start_index;
@@ -1666,6 +1702,8 @@ namespace PakReader
             {
                 case "BoolProperty":
                     return reader.ReadByte() != 1;
+                case "ByteProperty":
+                    return reader.ReadByte();
                 case "EnumProperty":
                     return read_fname(reader, name_map);
                 case "UInt32Property":
@@ -1674,6 +1712,8 @@ namespace PakReader
                     return new UScriptStruct(reader, name_map, import_map, struct_type);
                 case "NameProperty":
                     return read_fname(reader, name_map);
+                case "ObjectProperty":
+                    return new FPackageIndex(reader, import_map);
                 case "StrProperty":
                     return read_string(reader);
                 case "TextProperty":
@@ -1777,36 +1817,51 @@ namespace PakReader
                 case "FrameNumber":
                     struct_type = reader.ReadSingle();
                     break;/*
-                    case "SectionEvaluationDataTree":
-                        struct_type = new FSectionEvaluationDataTree(reader, name_map, import_map);
-                        break;
-                    case "MovieSceneTrackIdentifier":
-                        struct_type = reader.ReadSingle();
-                        break;
-                    case "MovieSceneSegment":
-                        struct_type = new FMovieSceneSegment(reader, name_map, import_map);
-                        break;
-                    case "MovieSceneEvalTemplatePtr":
-                        struct_type = new InlineUStruct(reader, name_map, import_map);
-                        break;
-                    case "MovieSceneTrackImplementationPtr":
-                        struct_type = new InlineUStruct(reader, name_map, import_map);
-                        break;
-                    case "MovieSceneSequenceInstanceDataPtr":
-                        struct_type = new InlineUStruct(reader, name_map, import_map);
-                        break;
-                    case "MovieSceneFrameRange":
-                        struct_type = new FMovieSceneFrameRange(reader, name_map, import_map);
-                        break;
-                    case "MovieSceneSegmentIdentifier":
-                        struct_type = reader.ReadSingle();
-                        break;
-                    case "MovieSceneSequenceID":
-                        struct_type = reader.ReadSingle();
-                        break;
-                    case "MovieSceneEvaluationKey":
-                        struct_type = new FMovieSceneEvaluationKey(reader, name_map, import_map);
-                        break;*/
+                case "SectionEvaluationDataTree":
+                    struct_type = new FSectionEvaluationDataTree(reader, name_map, import_map);
+                    break;
+                case "MovieSceneTrackIdentifier":
+                    struct_type = reader.ReadSingle();
+                    break;
+                case "MovieSceneSegment":
+                    struct_type = new FMovieSceneSegment(reader, name_map, import_map);
+                    break;
+                case "MovieSceneEvalTemplatePtr":
+                    struct_type = new InlineUStruct(reader, name_map, import_map);
+                    break;
+                case "MovieSceneTrackImplementationPtr":
+                    struct_type = new InlineUStruct(reader, name_map, import_map);
+                    break;
+                case "MovieSceneSequenceInstanceDataPtr":
+                    struct_type = new InlineUStruct(reader, name_map, import_map);
+                    break;
+                case "MovieSceneFrameRange":
+                    struct_type = new FMovieSceneFrameRange(reader, name_map, import_map);
+                    break;
+                case "MovieSceneSegmentIdentifier":
+                    struct_type = reader.ReadSingle();
+                    break;
+                case "MovieSceneSequenceID":
+                    struct_type = reader.ReadSingle();
+                    break;
+                case "MovieSceneEvaluationKey":
+                    struct_type = new FMovieSceneEvaluationKey(reader, name_map, import_map);
+                    break;*/
+                case "SmartName":
+                    struct_type = new FSmartName(reader, name_map);
+                    break;
+                case "RichCurveKey":
+                    struct_type = new FRichCurveKey(reader);
+                    break;
+                case "SimpleCurveKey":
+                    struct_type = new FSimpleCurveKey(reader);
+                    break;
+                case "DateTime":
+                    struct_type = new FDateTime(reader);
+                    break;
+                case "Timespan":
+                    struct_type = new FDateTime(reader);
+                    break;
                 default:
                     struct_type = new FStructFallback(reader, name_map, import_map);
                     break;
@@ -1939,7 +1994,7 @@ namespace PakReader
             var ww = 1f - (X * X + Y * Y + Z * Z);
             W = ww > 0 ? (float)Math.Sqrt(ww) : 0;
         }
-        
+
         public static implicit operator CQuat(FQuat me) => new CQuat
         {
             x = me.X,
@@ -1997,7 +2052,7 @@ namespace PakReader
                 Z = a.Z + b.Z
             };
         }
-        
+
         public bool Equals(FVector other) => other.X == X && other.Y == Y && other.Z == Z;
 
         public static bool operator ==(FVector a, FVector b) => a.Equals(b);
@@ -2122,7 +2177,7 @@ namespace PakReader
 
         internal Texture2D(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, int asset_file_size, long export_size, BinaryReader ubulk)
         {
-            var uobj = new UObject(reader, name_map, import_map, "Texture2D", true); // unsure if read zero is true or false
+            var uobj = new UObject(reader, name_map, import_map, "Texture2D", true);
 
             new FStripDataFlags(reader); // no idea
             new FStripDataFlags(reader); // why are there two
@@ -2164,7 +2219,7 @@ namespace PakReader
 
         internal FontFace(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
-            base_object = new UObject(reader, name_map, import_map, "FontFace", true); // unsure if read zero is true or false
+            base_object = new UObject(reader, name_map, import_map, "FontFace", true);
 
             new FStripDataFlags(reader); // no idea
             new FStripDataFlags(reader); // why are there two
@@ -2180,13 +2235,13 @@ namespace PakReader
 
         internal UDataTable(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
-            super_object = new UObject(reader, name_map, import_map, "RowStruct", true); // unsure if read zero is true or false
+            super_object = new UObject(reader, name_map, import_map, "RowStruct", true);
 
             rows = new (string Name, UObject Object)[reader.ReadInt32()];
 
             for (int i = 0; i < rows.Length; i++)
             {
-                rows[i] = (read_fname(reader, name_map), new UObject(reader, name_map, import_map, "RowStruct", true));
+                rows[i] = (read_fname(reader, name_map), new UObject(reader, name_map, import_map, "RowStruct", false));
             }
         }
     }
@@ -2206,7 +2261,7 @@ namespace PakReader
 
         internal UCurveTable(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
-            super_object = new UObject(reader, name_map, import_map, "CurveTable", true); // unsure if read zero is true or false
+            super_object = new UObject(reader, name_map, import_map, "CurveTable", true);
 
             row_map = new (string Name, UObject Object)[reader.ReadInt32()];
 
@@ -2229,7 +2284,7 @@ namespace PakReader
             }
             for (int i = 0; i < row_map.Length; i++)
             {
-                row_map[i] = (read_fname(reader, name_map), new UObject(reader, name_map, import_map, row_type, true));
+                row_map[i] = (read_fname(reader, name_map), new UObject(reader, name_map, import_map, row_type, false));
             }
         }
     }
@@ -2253,7 +2308,7 @@ namespace PakReader
 
         internal UAnimSequence(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
-            super_object = new UObject(reader, name_map, import_map, "AnimSequence", true); // unsure if read zero is true or false
+            super_object = new UObject(reader, name_map, import_map, "AnimSequence", true);
             skeleton_guid = new FGuid(reader);
             new FStripDataFlags(reader);
             if (reader.ReadUInt32() == 0)
@@ -2591,7 +2646,7 @@ namespace PakReader
             reference_skeleton = new FReferenceSkeleton(reader, name_map);
 
             anim_retarget_sources = new (string, FReferencePose)[reader.ReadUInt32()];
-            for(int i = 0; i < anim_retarget_sources.Length; i++)
+            for (int i = 0; i < anim_retarget_sources.Length; i++)
             {
                 anim_retarget_sources[i] = (read_fname(reader, name_map), new FReferencePose(reader, name_map));
             }
@@ -2623,7 +2678,7 @@ namespace PakReader
                 {
                     var data = ((UScriptArray)prop.tag_data).data;
                     LODInfo = new FSkeletalMeshLODInfo[data.Length];
-                    for(int i = 0; i < data.Length; i++)
+                    for (int i = 0; i < data.Length; i++)
                     {
                         var info = (UScriptStruct)data[i];
                         if (info.struct_name != "SkeletalMeshLODInfo")
@@ -2661,7 +2716,7 @@ namespace PakReader
 
             if (!flags.editor_data_stripped)
             {
-                Console.WriteLine("editor data still present!");
+                Console.WriteLine("Editor data still present!");
             }
 
             if (reader.ReadUInt32() == 0)
@@ -2673,10 +2728,10 @@ namespace PakReader
             uint serialize_guid = reader.ReadUInt32();
 
             MaterialAssets = new string[Materials.Length];
-            for(int i = 0; i < Materials.Length; i++)
+            for (int i = 0; i < Materials.Length; i++)
             {
                 if (Materials[i].Material.import == null) continue;
-                for(int j = 0; j < import_map.Length; j++)
+                for (int j = 0; j < import_map.Length; j++)
                 {
                     if (import_map[j].class_name != "MaterialInstanceConstant" && import_map[j].object_name.EndsWith(Materials[i].Material.import))
                     {
@@ -2688,7 +2743,7 @@ namespace PakReader
         }
     }
     
-    public sealed class Material : ExportObject
+    public sealed class UMaterial : ExportObject
     {
         public string DiffuseMap;
         public string MetallicMap;
@@ -2700,7 +2755,7 @@ namespace PakReader
 
         FObjectImport[] ImportMap;
 
-        internal Material(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        internal UMaterial(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
         {
             foreach (var import in import_map)
             {
@@ -2779,7 +2834,7 @@ namespace PakReader
         public string export_type;
         public FPropertyTag[] properties;
 
-        internal UObject(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, string export_type, bool read_zero)
+        internal UObject(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map, string export_type, bool read_guid)
         {
             this.export_type = export_type;
             var properties_ = new List<FPropertyTag>();
@@ -2793,9 +2848,10 @@ namespace PakReader
                 properties_.Add(tag);
             }
 
-            if (read_zero)
+            if (read_guid && reader.ReadUInt32() != 0)
             {
-                reader.ReadUInt32();
+                if (reader.BaseStream.Position + 16 <= reader.BaseStream.Length)
+                    new FGuid(reader);
             }
 
             properties = properties_.ToArray();
@@ -2847,7 +2903,7 @@ namespace PakReader
 
             if (inner_type == "StructProperty" || inner_type == "ArrayProperty")
             {
-                tag = read_property_tag(reader, name_map, import_map, true);
+                tag = read_property_tag(reader, name_map, import_map, false);
                 if (tag.Equals(default))
                 {
                     throw new IOException("Could not read file");
