@@ -22,9 +22,10 @@ namespace PakReader
             return package;
         }
 
-        public void AddPak(string file, byte[] aes)
+        public void AddPak(string file, byte[] aes = null) => AddPak(new PakReader(file, aes));
+        public void AddPak(Stream stream, string name, byte[] aes = null) => AddPak(new PakReader(stream, name, aes));
+        public void AddPak(PakReader reader)
         {
-            var reader = new PakReader(file, aes);
             foreach (var info in reader.FileInfos)
             {
                 var path = GetPath(info.Name);

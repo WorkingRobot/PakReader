@@ -25,5 +25,16 @@
     <ApplicationIcon />
     <OutputType>Library</OutputType>
     <StartupObject />
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <Copyright>Copyright © WorkingRobot 2019</Copyright>
+    <PackageProjectUrl>https://github.com/WorkingRobot/PakReader</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/WorkingRobot/PakReader.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>unreal engine pak parsing uasset uexp fortnite</PackageTags>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
+    <Description>Read UE pak files and its' included assets.</Description>
+    <PackageLicenseUrl>https://licenses.nuget.org/MIT</PackageLicenseUrl>
+    <Version>1.2.0</Version>
   </PropertyGroup>
 </Project>

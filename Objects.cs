@@ -297,6 +297,11 @@ namespace PakReader
             return (int)(((long)A + B + C + D) % uint.MaxValue - int.MaxValue);
         }
 
+        public override string ToString()
+        {
+            return $"({A}, {B}, {C}, {D})";
+        }
+
         public static bool operator ==(FGuid a, FGuid b) =>
             a.A == b.A &&
             a.B == b.B &&

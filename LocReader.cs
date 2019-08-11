@@ -180,7 +180,7 @@ namespace PakReader
         public LocMetaFile(BinaryReader reader)
         {
             LocMetaVersion VersionNumber = LocMetaVersion.INITIAL;
-            
+
             if (LocMetaMagic != new FGuid(reader))
             {
                 throw new IOException("LocMeta file has an invalid magic constant!");

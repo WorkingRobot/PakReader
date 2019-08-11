@@ -5,21 +5,25 @@ namespace PakReader
 {
     public class PakReader
     {
-        readonly FileStream stream;
-        readonly BinaryReader reader;
+        readonly Stream Stream;
+        readonly BinaryReader Reader;
         readonly byte[] Aes;
         public readonly string MountPoint;
         public readonly FPakEntry[] FileInfos;
+        public readonly string Name;
 
-        public PakReader(string file, byte[] aes = null, bool ParseFiles = true)
+        public PakReader(string file, byte[] aes = null, bool ParseFiles = true) : this(File.OpenRead(file), file, aes, ParseFiles) { }
+
+        public PakReader(Stream stream, string name, byte[] aes = null, bool ParseFiles = true)
         {
             Aes = aes;
-            stream = File.OpenRead(file);
-            reader = new BinaryReader(stream);
-            
-            stream.Seek(-FPakInfo.Size, SeekOrigin.End);
+            Stream = stream;
+            Name = name;
+            Reader = new BinaryReader(Stream);
 
-            FPakInfo info = new FPakInfo(reader);
+            Stream.Seek(-FPakInfo.Size, SeekOrigin.End);
+
+            FPakInfo info = new FPakInfo(Reader);
             if (info.Magic != FPakInfo.PAK_FILE_MAGIC)
             {
                 throw new FileLoadException("The file magic is invalid");
@@ -27,7 +31,7 @@ namespace PakReader
 
             if (info.Version > (int)PAK_VERSION.PAK_LATEST)
             {
-                Console.Error.WriteLine($"WARNING: Pak file \"{file}\" has unsupported version {info.Version}");
+                Console.Error.WriteLine($"WARNING: Pak file \"{Name}\" has unsupported version {info.Version}");
             }
 
             if (info.bEncryptedIndex != 0)
@@ -40,15 +44,14 @@ namespace PakReader
 
             // Read pak index
 
-            stream.Seek(info.IndexOffset, SeekOrigin.Begin);
+            Stream.Seek(info.IndexOffset, SeekOrigin.Begin);
 
             // Manage pak files with encrypted index
-            byte[] InfoBlock;
-            BinaryReader infoReader = reader;
+            BinaryReader infoReader = Reader;
 
             if (info.bEncryptedIndex != 0)
             {
-                InfoBlock = reader.ReadBytes((int)info.IndexSize);
+                var InfoBlock = Reader.ReadBytes((int)info.IndexSize);
                 InfoBlock = AESDecryptor.DecryptAES(InfoBlock, (int)info.IndexSize, Aes, Aes.Length);
 
                 infoReader = new BinaryReader(new MemoryStream(InfoBlock));
@@ -99,15 +102,12 @@ namespace PakReader
 
             if (badMountPoint)
             {
-                Console.Error.WriteLine($"WARNING: Pak \"{file}\" has strange mount point \"{MountPoint}\", mounting to root");
+                Console.Error.WriteLine($"WARNING: Pak \"{Name}\" has strange mount point \"{MountPoint}\", mounting to root");
                 MountPoint = "/";
             }
-
-            int count = infoReader.ReadInt32();
-
-            FileInfos = new FPakEntry[count];
             
-            for (int i = 0; i < count; i++)
+            FileInfos = new FPakEntry[infoReader.ReadInt32()];
+            for (int i = 0; i < FileInfos.Length; i++)
             {
                 FileInfos[i] = new FPakEntry(infoReader, MountPoint, info.Version);
             }
@@ -117,18 +117,18 @@ namespace PakReader
 
         public Stream GetPackageStream(BasePakEntry entry)
         {
-            lock (reader)
+            lock (Reader)
             {
-                return new FPakFile(reader, entry, Aes).GetStream();
+                return new FPakFile(Reader, entry, Aes).GetStream();
             }
         }
 
         public void Export(BasePakEntry uasset, BasePakEntry uexp, BasePakEntry ubulk)
         {
             if (uasset == null || uexp == null) return;
-            var assetStream = new FPakFile(reader, uasset, Aes).GetStream();
-            var expStream = new FPakFile(reader, uexp, Aes).GetStream();
-            var bulkStream = ubulk == null ? null : new FPakFile(reader, ubulk, Aes).GetStream();
+            var assetStream = new FPakFile(Reader, uasset, Aes).GetStream();
+            var expStream = new FPakFile(Reader, uexp, Aes).GetStream();
+            var bulkStream = ubulk == null ? null : new FPakFile(Reader, ubulk, Aes).GetStream();
 
             try
             {

@@ -84,10 +84,6 @@ namespace PakReader
                         case "Skeleton":
                             Exports[ind] = new USkeleton(reader, name_map, import_map);
                             break;
-                        case "Material":
-                        case "MaterialInstanceConstant":
-                            Exports[ind] = new UMaterial(reader, name_map, import_map);
-                            break;
                         default:
                             Exports[ind] = new UObject(reader, name_map, import_map, export_type, true);
                             break;
@@ -106,9 +102,25 @@ namespace PakReader
                 }
                 ind++;
             }
-            ind = 0;
-
+            //Exports[Exports.Length - 1] = new AssetInfo(name_map, import_map, export_map);
         }
+
+        /*public class AssetInfo : ExportObject
+        {
+            [JsonProperty]
+            FNameEntrySerialized[] name_map;
+            [JsonProperty]
+            FObjectImport[] import_map;
+            [JsonProperty]
+            FObjectExport[] export_map;
+
+            internal AssetInfo(FNameEntrySerialized[] name_map, FObjectImport[] import_map, FObjectExport[] export_map)
+            {
+                this.name_map = name_map;
+                this.import_map = import_map;
+                this.export_map = export_map;
+            }
+        }*/
 
         static readonly uint[] _Lookup32 = Enumerable.Range(0, 256).Select(i => {
             string s = i.ToString("X2");
@@ -1493,7 +1505,7 @@ namespace PakReader
             }
         }
 
-        struct FObjectExport
+        public struct FObjectExport
         {
             public FPackageIndex class_index;
             public FPackageIndex super_index;
@@ -2742,90 +2754,30 @@ namespace PakReader
             }
         }
     }
-    
-    public sealed class UMaterial : ExportObject
-    {
-        public string DiffuseMap;
-        public string MetallicMap;
-        public string NormalMap;
-        public string SpecularMap;
-        public string EmissionMap; // Unlit, an example is a plane's engine bits going red
 
-        public string CustomizationMask;
-
-        FObjectImport[] ImportMap;
-
-        internal UMaterial(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
-        {
-            foreach (var import in import_map)
-            {
-                if (import.class_name == "Texture2D")
-                {
-                    var extP = import.object_name.Split('_');
-                    var ext = extP[extP.Length - 1];
-                    var imp = import.outer_index.import;
-                    switch (ext.ToLowerInvariant())
-                    {
-                        case "d":
-                        case "c":
-                            DiffuseMap = imp;
-                            break;
-                        case "m":
-                            MetallicMap = imp;
-                            break;
-                        case "n":
-                            NormalMap = imp;
-                            break;
-                        case "s":
-                            SpecularMap = imp;
-                            break;
-                        case "cm":
-                            CustomizationMask = imp;
-                            break;
-                        case "fx":
-                        case "e":
-                            EmissionMap = imp;
-                            break;
-                        default:
-                            Console.WriteLine($"Invalid texture name: {import.object_name}");
-                            break;
-                    }
-                }
-            }
-            ImportMap = import_map;
-            reader.BaseStream.Seek(reader.BaseStream.Length - 4, SeekOrigin.Begin);
-        }
-    }
-
-    public struct FPackageIndex
+    public class FPackageIndex
     {
         [JsonIgnore]
         public int index;
         public string import;
+        public string outer_import;
 
         internal FPackageIndex(BinaryReader reader, FObjectImport[] import_map)
         {
             index = reader.ReadInt32();
-            var import = get_package(index, import_map);
-            if (import.Equals(default))
-            {
-                this.import = index.ToString();
-            }
-            else
-            {
-                this.import = import.object_name;
-            }
-        }
-
-        static FObjectImport get_package(int index, FObjectImport[] import_map)
-        {
             if (index < 0) index *= -1;
             index -= 1;
             if (index < 0 || index >= import_map.Length)
             {
-                return default;
+                import = index.ToString();
+                outer_import = default;
             }
-            return import_map[index];
+            else
+            {
+                var imp = import_map[index];
+                import = imp.object_name;
+                outer_import = imp.outer_index?.import;
+            }
         }
     }
 
