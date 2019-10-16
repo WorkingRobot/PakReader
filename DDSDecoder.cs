@@ -1,32 +1,26 @@
 ﻿using System;
-using System.Runtime.InteropServices;
 using System.IO;
+using System.Runtime.InteropServices;
 using SkiaSharp;
 
 namespace PakReader
 {
-    #region DDSImage Class
-    class DDSImage : IDisposable
+    internal class DDSImage : IDisposable
     {
-        #region Variables
-        private bool m_isValid = false;
-        private SKBitmap m_bitmap = null;
-        #endregion
-
         #region Constructor/Destructor
         public DDSImage(byte[] ddsImage)
         {
             if (ddsImage == null) return;
             if (ddsImage.Length == 0) return;
 
-            using (MemoryStream stream = new MemoryStream(ddsImage.Length))
+            using (var stream = new MemoryStream(ddsImage.Length))
             {
                 stream.Write(ddsImage, 0, ddsImage.Length);
-                stream.Seek(0, SeekOrigin.Begin);
+                stream.Position = 0; ;
 
-                using (BinaryReader reader = new BinaryReader(stream))
+                using (var reader = new BinaryReader(stream))
                 {
-                    this.Parse(reader);
+                    Parse(reader);
                 }
             }
         }
@@ -36,16 +30,13 @@ namespace PakReader
             if (ddsImage == null) return;
             if (!ddsImage.CanRead) return;
 
-            using (BinaryReader reader = new BinaryReader(ddsImage))
+            using (var reader = new BinaryReader(ddsImage))
             {
-                this.Parse(reader);
+                Parse(reader);
             }
         }
 
-        private DDSImage(SKBitmap bitmap)
-        {
-            this.m_bitmap = bitmap;
-        }
+        private DDSImage(SKBitmap bitmap) => BitmapImage = bitmap;
         #endregion
 
         #region Override Methods
@@ -54,71 +45,62 @@ namespace PakReader
         #region Private Methods
         private void Parse(BinaryReader reader)
         {
-            DDSStruct header = new DDSStruct();
-            PixelFormat pixelFormat = PixelFormat.UNKNOWN;
-            byte[] data = null;
-
-            if (this.ReadHeader(reader, ref header))
+            var header = new DDSStruct();
+            if (ReadHeader(reader, ref header))
             {
-                this.m_isValid = true;
+                IsValid = true;
                 // patches for stuff
                 if (header.depth == 0) header.depth = 1;
 
                 uint blocksize = 0;
-                pixelFormat = this.GetFormat(header, ref blocksize);
+                PixelFormat pixelFormat = GetFormat(header, ref blocksize);
                 if (pixelFormat == PixelFormat.UNKNOWN)
                 {
-                    throw new InvalidFileHeaderException();
+                    throw new FileLoadException("Invalid file header");
                 }
 
-                data = this.ReadData(reader, header);
+                byte[] data = ReadData(reader, header);
                 if (data != null)
                 {
-                    byte[] rawData = this.DecompressData(header, data, pixelFormat);
-                    this.m_bitmap = this.CreateBitmap((int)header.width, (int)header.height, rawData);
+                    byte[] rawData = DecompressData(header, data, pixelFormat);
+                    BitmapImage = CreateBitmap((int)header.width, (int)header.height, rawData);
                 }
             }
         }
 
         private byte[] ReadData(BinaryReader reader, DDSStruct header)
         {
-            byte[] compdata = null;
-            uint compsize = 0;
-
             if ((header.flags & DDSD_LINEARSIZE) > 1)
             {
-                compdata = reader.ReadBytes((int)header.sizeorpitch);
-                compsize = (uint)compdata.Length;
+                return reader.ReadBytes((int)header.sizeorpitch);
             }
             else
             {
                 uint bps = header.width * header.pixelformat.rgbbitcount / 8;
-                compsize = bps * header.height * header.depth;
-                compdata = new byte[compsize];
+                uint compsize = bps * header.height * header.depth;
+                byte[] compdata = new byte[compsize];
 
-                MemoryStream mem = new MemoryStream((int)compsize);
-
-                byte[] temp;
-                for (int z = 0; z < header.depth; z++)
+                using (var mem = new MemoryStream((int)compsize))
                 {
-                    for (int y = 0; y < header.height; y++)
+                    byte[] temp = new byte[bps];
+                    for (int z = 0; z < header.depth; z++)
                     {
-                        temp = reader.ReadBytes((int)bps);
-                        mem.Write(temp, 0, temp.Length);
+                        for (int y = 0; y < header.height; y++)
+                        {
+                            reader.BaseStream.Read(temp, 0, (int)bps);
+                            mem.Write(temp, 0, (int)bps);
+                        }
                     }
+                    mem.Position = 0;
+                    mem.Read(compdata, 0, compdata.Length);
                 }
-                mem.Seek(0, SeekOrigin.Begin);
-
-                mem.Read(compdata, 0, compdata.Length);
-                mem.Close();
+                return compdata;
             }
-
-            return compdata;
         }
 
         private SKBitmap CreateBitmap(int width, int height, byte[] rawData)
         {
-            SKBitmap bitmap = new SKBitmap(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+            var bitmap = new SKBitmap(width, height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
             unsafe
             {
                 fixed (byte* p = rawData)
@@ -126,25 +108,6 @@ namespace PakReader
                     bitmap.SetPixels(new IntPtr(p));
                 }
             }
-            /*BitmapData data = bitmap.LockBits(new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height)
-                , ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            IntPtr scan = data.Scan0;
-            int size = bitmap.Width * bitmap.Height * 4;
-
-            unsafe
-            {
-                byte* p = (byte*)scan;
-                for (int i = 0; i < size; i += 4)
-                {
-                    // iterate through bytes.
-                    // Bitmap stores it's data in RGBA order.
-                    // DDS stores it's data in BGRA order.
-                    p[i] = rawData[i + 2]; // blue
-                    p[i + 1] = rawData[i + 1]; // green
-                    p[i + 2] = rawData[i];   // red
-                    p[i + 3] = rawData[i + 3]; // alpha
-                }
-            }*/
             return bitmap;
         }
 
@@ -195,7 +158,7 @@ namespace PakReader
 
         private PixelFormat GetFormat(DDSStruct header, ref uint blocksize)
         {
-            PixelFormat format = PixelFormat.UNKNOWN;
+            PixelFormat format;
             if ((header.pixelformat.flags & DDPF_FOURCC) == DDPF_FOURCC)
             {
                 blocksize = ((header.width + 3) / 4) * ((header.height + 3) / 4) * header.depth;
@@ -288,28 +251,18 @@ namespace PakReader
                 // uncompressed image
                 if ((header.pixelformat.flags & DDPF_LUMINANCE) == DDPF_LUMINANCE)
                 {
-                    if ((header.pixelformat.flags & DDPF_ALPHAPIXELS) == DDPF_ALPHAPIXELS)
-                    {
-                        format = PixelFormat.LUMINANCE_ALPHA;
-                    }
-                    else
-                    {
-                        format = PixelFormat.LUMINANCE;
-                    }
+                    format = (header.pixelformat.flags & DDPF_ALPHAPIXELS) == DDPF_ALPHAPIXELS ?
+                        PixelFormat.LUMINANCE_ALPHA :
+                        PixelFormat.LUMINANCE;
                 }
                 else
                 {
-                    if ((header.pixelformat.flags & DDPF_ALPHAPIXELS) == DDPF_ALPHAPIXELS)
-                    {
-                        format = PixelFormat.RGBA;
-                    }
-                    else
-                    {
-                        format = PixelFormat.RGB;
-                    }
+                    format = (header.pixelformat.flags & DDPF_ALPHAPIXELS) == DDPF_ALPHAPIXELS ?
+                        PixelFormat.RGBA :
+                        PixelFormat.RGB;
                 }
 
-                blocksize = (header.width * header.height * header.depth * (header.pixelformat.rgbbitcount >> 3));
+                blocksize = header.width * header.height * header.depth * (header.pixelformat.rgbbitcount >> 3);
             }
 
             return format;
@@ -380,11 +333,15 @@ namespace PakReader
             // a2b10g10r10 format
             if (header.pixelformat.rbitmask == 0x3FF00000 && header.pixelformat.gbitmask == 0x000FFC00 && header.pixelformat.bbitmask == 0x000003FF
                 && header.pixelformat.alphabitmask == 0xC0000000)
+            {
                 return true;
+            }
             // a2r10g10b10 format
             else if (header.pixelformat.rbitmask == 0x000003FF && header.pixelformat.gbitmask == 0x000FFC00 && header.pixelformat.bbitmask == 0x3FF00000
                 && header.pixelformat.alphabitmask == 0xC0000000)
+            {
                 return true;
+            }
 
             return false;
         }
@@ -460,7 +417,7 @@ namespace PakReader
             op.blue = (byte)(b << 3 | r >> 2);
         }
 
-        private unsafe void DxtcReadColors(byte* data, ref Colour565 color_0, ref Colour565 color_1)
+        private unsafe void DxtcReadColors(byte* data, ref Colour565 color_0)
         {
             color_0.blue = (byte)(data[0] & 0x1F);
             color_0.green = (byte)(((data[0] & 0xE0) >> 5) | ((data[1] & 0x7) << 3));
@@ -513,7 +470,9 @@ namespace PakReader
                     count++;
                 }
                 else if (foundBit)
+                {
                     return count;
+                }
             }
 
             return count;
@@ -581,8 +540,7 @@ namespace PakReader
 
         private unsafe void ConvFloat16ToFloat32(uint* dest, ushort* src, uint size)
         {
-            uint i;
-            for (i = 0; i < size; ++i, ++dest, ++src)
+            for (uint i = 0; i < size; ++i, ++dest, ++src)
             {
                 //float: 1 sign bit, 8 exponent bits, 23 mantissa bits
                 //half: 1 sign bit, 5 exponent bits, 10 mantissa bits
@@ -592,8 +550,7 @@ namespace PakReader
 
         private unsafe void ConvG16R16ToFloat32(uint* dest, ushort* src, uint size)
         {
-            uint i;
-            for (i = 0; i < size; i += 3)
+            for (uint i = 0; i < size; i += 3)
             {
                 //float: 1 sign bit, 8 exponent bits, 23 mantissa bits
                 //half: 1 sign bit, 5 exponent bits, 10 mantissa bits
@@ -605,8 +562,7 @@ namespace PakReader
 
         private unsafe void ConvR16ToFloat32(uint* dest, ushort* src, uint size)
         {
-            uint i;
-            for (i = 0; i < size; i += 3)
+            for (uint i = 0; i < size; i += 3)
             {
                 //float: 1 sign bit, 8 exponent bits, 23 mantissa bits
                 //half: 1 sign bit, 5 exponent bits, 10 mantissa bits
@@ -620,23 +576,21 @@ namespace PakReader
         #region Decompress Methods
         private byte[] DecompressData(DDSStruct header, byte[] data, PixelFormat pixelFormat)
         {
-            System.Diagnostics.Debug.WriteLine(pixelFormat);
             // allocate bitmap
-            byte[] rawData = null;
-
+            byte[] rawData;
             switch (pixelFormat)
             {
                 case PixelFormat.RGBA:
-                    rawData = this.DecompressRGBA(header, data, pixelFormat);
+                    rawData = DecompressRGBA(header, data, pixelFormat);
                     break;
 
                 case PixelFormat.RGB:
-                    rawData = this.DecompressRGB(header, data, pixelFormat);
+                    rawData = DecompressRGB(header, data, pixelFormat);
                     break;
 
                 case PixelFormat.LUMINANCE:
                 case PixelFormat.LUMINANCE_ALPHA:
-                    rawData = this.DecompressLum(header, data, pixelFormat);
+                    rawData = DecompressLum(header, data, pixelFormat);
                     break;
 
                 case PixelFormat.DXT1:
@@ -660,15 +614,15 @@ namespace PakReader
                     break;
 
                 case PixelFormat.THREEDC:
-                    rawData = this.Decompress3Dc(header, data, pixelFormat);
+                    rawData = Decompress3Dc(header, data, pixelFormat);
                     break;
 
                 case PixelFormat.ATI1N:
-                    rawData = this.DecompressAti1n(header, data, pixelFormat);
+                    rawData = DecompressAti1n(header, data, pixelFormat);
                     break;
 
                 case PixelFormat.RXGB:
-                    rawData = this.DecompressRXGB(header, data, pixelFormat);
+                    rawData = DecompressRXGB(header, data, pixelFormat);
                     break;
 
                 case PixelFormat.R16F:
@@ -677,85 +631,75 @@ namespace PakReader
                 case PixelFormat.R32F:
                 case PixelFormat.G32R32F:
                 case PixelFormat.A32B32G32R32F:
-                    rawData = this.DecompressFloat(header, data, pixelFormat);
+                    rawData = DecompressFloat(header, data, pixelFormat);
                     break;
 
                 default:
-                    throw new UnknownFileFormatException();
+                    throw new ArgumentException("Unknown PixelFormat", nameof(pixelFormat));
             }
 
             return rawData;
         }
 
-        public static byte[] DecompressDXT5(byte[] data, PixelFormat format, uint width, uint height, uint depth)
-        {
-            return DecompressDXT5(new DDSStruct
+        public static byte[] DecompressDXT5(byte[] data, PixelFormat format, uint width, uint height, uint depth) =>
+            DecompressDXT5(new DDSStruct
             {
                 width = width,
                 height = height,
                 depth = depth,
-                pixelformat = new DDSStruct.pixelformatstruct
+                pixelformat = new DDSStruct.PixelFormatStruct
                 {
                     rgbbitcount = 8
                 }
             }, data, format);
-        }
 
-        public static byte[] DecompressDXT4(byte[] data, PixelFormat format, uint width, uint height, uint depth)
-        {
-            return DecompressDXT4(new DDSStruct
+        public static byte[] DecompressDXT4(byte[] data, PixelFormat format, uint width, uint height, uint depth) =>
+            DecompressDXT4(new DDSStruct
             {
                 width = width,
                 height = height,
                 depth = depth,
-                pixelformat = new DDSStruct.pixelformatstruct
+                pixelformat = new DDSStruct.PixelFormatStruct
                 {
                     rgbbitcount = 8
                 }
             }, data, format);
-        }
 
-        public static byte[] DecompressDXT3(byte[] data, PixelFormat format, uint width, uint height, uint depth)
-        {
-            return DecompressDXT3(new DDSStruct
+        public static byte[] DecompressDXT3(byte[] data, PixelFormat format, uint width, uint height, uint depth) =>
+            DecompressDXT3(new DDSStruct
             {
                 width = width,
                 height = height,
                 depth = depth,
-                pixelformat = new DDSStruct.pixelformatstruct
+                pixelformat = new DDSStruct.PixelFormatStruct
                 {
                     rgbbitcount = 8
                 }
             }, data, format);
-        }
 
-        public static byte[] DecompressDXT2(byte[] data, PixelFormat format, uint width, uint height, uint depth)
-        {
-            return DecompressDXT2(new DDSStruct
+        public static byte[] DecompressDXT2(byte[] data, PixelFormat format, uint width, uint height, uint depth) =>
+            DecompressDXT2(new DDSStruct
             {
                 width = width,
                 height = height,
                 depth = depth,
-                pixelformat = new DDSStruct.pixelformatstruct
+                pixelformat = new DDSStruct.PixelFormatStruct
                 {
                     rgbbitcount = 8
                 }
             }, data, format);
-        }
 
-        public static byte[] DecompressDXT1(byte[] data, PixelFormat format, uint width, uint height, uint depth)
-        {
-            return DecompressDXT1(new DDSStruct
+        public static byte[] DecompressDXT1(byte[] data, PixelFormat format, uint width, uint height, uint depth) =>
+            DecompressDXT1(new DDSStruct
             {
                 width = width,
                 height = height,
                 depth = depth,
-                pixelformat = new DDSStruct.pixelformatstruct
+                pixelformat = new DDSStruct.PixelFormatStruct
                 {
                     rgbbitcount = 8
                 }
             }, data, format);
-        }
 
         private static unsafe byte[] DecompressDXT1(DDSStruct header, byte[] data, PixelFormat pixelFormat)
         {
@@ -770,7 +714,7 @@ namespace PakReader
             // DXT1 decompressor
             byte[] rawData = new byte[depth * sizeofplane + height * bps + width * bpp];
 
-            Colour8888[] colours = new Colour8888[4];
+            var colours = new Colour8888[4];
             colours[0].alpha = 0xFF;
             colours[1].alpha = 0xFF;
             colours[2].alpha = 0xFF;
@@ -835,10 +779,10 @@ namespace PakReader
                                     if (((x + i) < width) && ((y + j) < height))
                                     {
                                         uint offset = (uint)(z * sizeofplane + (y + j) * bps + (x + i) * bpp);
-                                        rawData[offset + 0] = (byte)col.red;
-                                        rawData[offset + 1] = (byte)col.green;
-                                        rawData[offset + 2] = (byte)col.blue;
-                                        rawData[offset + 3] = (byte)col.alpha;
+                                        rawData[offset + 0] = col.red;
+                                        rawData[offset + 1] = col.green;
+                                        rawData[offset + 2] = col.blue;
+                                        rawData[offset + 3] = col.alpha;
                                     }
                                 }
                             }
@@ -877,7 +821,7 @@ namespace PakReader
 
             // DXT3 decompressor
             byte[] rawData = new byte[depth * sizeofplane + height * bps + width * bpp];
-            Colour8888[] colours = new Colour8888[4];
+            var colours = new Colour8888[4];
 
             fixed (byte* bytePtr = data)
             {
@@ -920,9 +864,9 @@ namespace PakReader
                                     if (((x + i) < width) && ((y + j) < height))
                                     {
                                         uint offset = (uint)(z * sizeofplane + (y + j) * bps + (x + i) * bpp);
-                                        rawData[offset + 0] = (byte)colours[select].red;
-                                        rawData[offset + 1] = (byte)colours[select].green;
-                                        rawData[offset + 2] = (byte)colours[select].blue;
+                                        rawData[offset + 0] = colours[select].red;
+                                        rawData[offset + 1] = colours[select].green;
+                                        rawData[offset + 2] = colours[select].blue;
                                     }
                                 }
                             }
@@ -975,7 +919,7 @@ namespace PakReader
             int depth = (int)header.depth;
 
             byte[] rawData = new byte[depth * sizeofplane + height * bps + width * bpp];
-            Colour8888[] colours = new Colour8888[4];
+            var colours = new Colour8888[4];
             ushort[] alphas = new ushort[8];
 
             fixed (byte* bytePtr = data)
@@ -1024,9 +968,9 @@ namespace PakReader
                                     if (((x + i) < width) && ((y + j) < height))
                                     {
                                         uint offset = (uint)(z * sizeofplane + (y + j) * bps + (x + i) * bpp);
-                                        rawData[offset] = (byte)col.red;
-                                        rawData[offset + 1] = (byte)col.green;
-                                        rawData[offset + 2] = (byte)col.blue;
+                                        rawData[offset] = col.red;
+                                        rawData[offset + 1] = col.green;
+                                        rawData[offset + 2] = col.blue;
                                     }
                                 }
                             }
@@ -1221,8 +1165,10 @@ namespace PakReader
                             int t2 = yColours[1] = temp[1];
                             temp += 2;
                             if (t1 > t2)
+                            {
                                 for (int i = 2; i < 8; ++i)
                                     yColours[i] = (byte)(t1 + ((t2 - t1) * (i - 1)) / 7);
+                            }
                             else
                             {
                                 for (int i = 2; i < 6; ++i)
@@ -1236,8 +1182,10 @@ namespace PakReader
                             t2 = xColours[1] = temp2[1];
                             temp2 += 2;
                             if (t1 > t2)
+                            {
                                 for (int i = 2; i < 8; ++i)
                                     xColours[i] = (byte)(t1 + ((t2 - t1) * (i - 1)) / 7);
+                            }
                             else
                             {
                                 for (int i = 2; i < 6; ++i)
@@ -1326,8 +1274,10 @@ namespace PakReader
                             int t2 = colours[1] = temp[1];
                             temp += 2;
                             if (t1 > t2)
+                            {
                                 for (int i = 2; i < 8; ++i)
                                     colours[i] = (byte)(t1 + ((t2 - t1) * (i - 1)) / 7);
+                            }
                             else
                             {
                                 for (int i = 2; i < 6; ++i)
@@ -1415,9 +1365,9 @@ namespace PakReader
 
             byte[] rawData = new byte[depth * sizeofplane + height * bps + width * bpp];
 
-            Colour565 color_0 = new Colour565();
-            Colour565 color_1 = new Colour565();
-            Colour8888[] colours = new Colour8888[4];
+            var color_0 = new Colour565();
+            var color_1 = new Colour565();
+            var colours = new Colour8888[4];
             byte[] alphas = new byte[8];
 
             fixed (byte* bytePtr = data)
@@ -1436,7 +1386,7 @@ namespace PakReader
                             byte* alphamask = temp + 2;
                             temp += 8;
 
-                            DxtcReadColors(temp, ref color_0, ref color_1);
+                            DxtcReadColors(temp, ref color_0);
                             temp += 4;
 
                             uint bitmask = ((uint*)temp)[1];
@@ -1617,207 +1567,6 @@ namespace PakReader
             return rawData;
         }
 
-        #region UNUSED
-        private unsafe byte[] DecompressARGB(DDSStruct header, byte[] data, PixelFormat pixelFormat)
-        {
-            // allocate bitmap
-            int bpp = (int)(PixelFormatToBpp(pixelFormat, header.pixelformat.rgbbitcount));
-            int bps = (int)(header.width * bpp * PixelFormatToBpc(pixelFormat));
-            int sizeofplane = (int)(bps * header.height);
-            int width = (int)header.width;
-            int height = (int)header.height;
-            int depth = (int)header.depth;
-
-            if (Check16BitComponents(header))
-                return DecompressARGB16(header, data, pixelFormat);
-
-            int sizeOfData = (int)((header.width * header.pixelformat.rgbbitcount / 8) * header.height * header.depth);
-            byte[] rawData = new byte[depth * sizeofplane + height * bps + width * bpp];
-
-            if ((pixelFormat == PixelFormat.LUMINANCE) && (header.pixelformat.rgbbitcount == 16) && (header.pixelformat.rbitmask == 0xFFFF))
-            {
-                Array.Copy(data, rawData, data.Length);
-                return rawData;
-            }
-
-            uint readI = 0, tempBpp;
-            uint redL = 0, redR = 0;
-            uint greenL = 0, greenR = 0;
-            uint blueL = 0, blueR = 0;
-            uint alphaL = 0, alphaR = 0;
-
-            GetBitsFromMask(header.pixelformat.rbitmask, ref redL, ref redR);
-            GetBitsFromMask(header.pixelformat.gbitmask, ref greenL, ref greenR);
-            GetBitsFromMask(header.pixelformat.bbitmask, ref blueL, ref blueR);
-            GetBitsFromMask(header.pixelformat.alphabitmask, ref alphaL, ref alphaR);
-            tempBpp = header.pixelformat.rgbbitcount / 8;
-
-            fixed (byte* bytePtr = data)
-            {
-                byte* temp = bytePtr;
-                for (int i = 0; i < sizeOfData; i += bpp)
-                {
-                    //@TODO: This is SLOOOW...
-                    //but the old version crashed in release build under
-                    //winxp (and xp is right to stop this code - I always
-                    //wondered that it worked the old way at all)
-                    if (sizeOfData - i < 4)
-                    {
-                        //less than 4 byte to write?
-                        if (tempBpp == 3)
-                        {
-                            //this branch is extra-SLOOOW
-                            readI = (uint)(*temp | ((*(temp + 1)) << 8) | ((*(temp + 2)) << 16));
-                        }
-                        else if (tempBpp == 1)
-                            readI = *((byte*)temp);
-                        else if (tempBpp == 2)
-                            readI = (uint)(temp[0] | (temp[1] << 8));
-                    }
-                    else
-                        readI = (uint)(temp[0] | (temp[1] << 8) | (temp[2] << 16) | (temp[3] << 24));
-                    temp += tempBpp;
-
-                    rawData[i] = (byte)((((int)readI & (int)header.pixelformat.rbitmask) >> (int)redR) << (int)redL);
-
-                    if (bpp >= 3)
-                    {
-                        rawData[i + 1] = (byte)((((int)readI & (int)header.pixelformat.gbitmask) >> (int)greenR) << (int)greenL);
-                        rawData[i + 2] = (byte)((((int)readI & header.pixelformat.bbitmask) >> (int)blueR) << (int)blueL);
-
-                        if (bpp == 4)
-                        {
-                            rawData[i + 3] = (byte)((((int)readI & (int)header.pixelformat.alphabitmask) >> (int)alphaR) << (int)alphaL);
-                            if (alphaL >= 7)
-                            {
-                                rawData[i + 3] = (byte)(rawData[i + 3] != 0 ? 0xFF : 0x00);
-                            }
-                            else if (alphaL >= 4)
-                            {
-                                rawData[i + 3] = (byte)(rawData[i + 3] | (rawData[i + 3] >> 4));
-                            }
-                        }
-                    }
-                    else if (bpp == 2)
-                    {
-                        rawData[i + 1] = (byte)((((int)readI & (int)header.pixelformat.alphabitmask) >> (int)alphaR) << (int)alphaL);
-                        if (alphaL >= 7)
-                        {
-                            rawData[i + 1] = (byte)(rawData[i + 1] != 0 ? 0xFF : 0x00);
-                        }
-                        else if (alphaL >= 4)
-                        {
-                            rawData[i + 1] = (byte)(rawData[i + 1] | (rawData[i + 3] >> 4));
-                        }
-                    }
-                }
-            }
-            return rawData;
-        }
-
-        private unsafe byte[] DecompressARGB16(DDSStruct header, byte[] data, PixelFormat pixelFormat)
-        {
-            // allocate bitmap
-            int bpp = (int)(PixelFormatToBpp(pixelFormat, header.pixelformat.rgbbitcount));
-            int bps = (int)(header.width * bpp * PixelFormatToBpc(pixelFormat));
-            int sizeofplane = (int)(bps * header.height);
-            int width = (int)header.width;
-            int height = (int)header.height;
-            int depth = (int)header.depth;
-
-            int sizeOfData = (int)((header.width * header.pixelformat.rgbbitcount / 8) * header.height * header.depth);
-            byte[] rawData = new byte[depth * sizeofplane + height * bps + width * bpp];
-
-            uint readI = 0, tempBpp = 0;
-            uint redL = 0, redR = 0;
-            uint greenL = 0, greenR = 0;
-            uint blueL = 0, blueR = 0;
-            uint alphaL = 0, alphaR = 0;
-            uint redPad = 0, greenPad = 0, bluePad = 0, alphaPad = 0;
-
-            GetBitsFromMask(header.pixelformat.rbitmask, ref redL, ref redR);
-            GetBitsFromMask(header.pixelformat.gbitmask, ref greenL, ref greenR);
-            GetBitsFromMask(header.pixelformat.bbitmask, ref blueL, ref blueR);
-            GetBitsFromMask(header.pixelformat.alphabitmask, ref alphaL, ref alphaR);
-            redPad = 16 - CountBitsFromMask(header.pixelformat.rbitmask);
-            greenPad = 16 - CountBitsFromMask(header.pixelformat.gbitmask);
-            bluePad = 16 - CountBitsFromMask(header.pixelformat.bbitmask);
-            alphaPad = 16 - CountBitsFromMask(header.pixelformat.alphabitmask);
-
-            redL = redL + redPad;
-            greenL = greenL + greenPad;
-            blueL = blueL + bluePad;
-            alphaL = alphaL + alphaPad;
-
-            tempBpp = header.pixelformat.rgbbitcount / 8;
-            fixed (byte* bytePtr = data)
-            {
-                byte* temp = bytePtr;
-                fixed (byte* destPtr = rawData)
-                {
-                    byte* destData = destPtr;
-                    for (int i = 0; i < sizeOfData / 2; i += bpp)
-                    {
-                        //@TODO: This is SLOOOW...
-                        //but the old version crashed in release build under
-                        //winxp (and xp is right to stop this code - I always
-                        //wondered that it worked the old way at all)
-                        if (sizeOfData - i < 4)
-                        {
-                            //less than 4 byte to write?
-                            if (tempBpp == 3)
-                            {
-                                //this branch is extra-SLOOOW
-                                readI = (uint)(*temp | ((*(temp + 1)) << 8) | ((*(temp + 2)) << 16));
-                            }
-                            else if (tempBpp == 1)
-                                readI = *((byte*)temp);
-                            else if (tempBpp == 2)
-                                readI = (uint)(temp[0] | (temp[1] << 8));
-                        }
-                        else
-                            readI = (uint)(temp[0] | (temp[1] << 8) | (temp[2] << 16) | (temp[3] << 24));
-                        temp += tempBpp;
-
-                        ((ushort*)destData)[i + 2] = (ushort)((((int)readI & (int)header.pixelformat.rbitmask) >> (int)redR) << (int)redL);
-
-                        if (bpp >= 3)
-                        {
-                            ((ushort*)destData)[i + 1] = (ushort)((((int)readI & (int)header.pixelformat.gbitmask) >> (int)greenR) << (int)greenL);
-                            ((ushort*)destData)[i] = (ushort)((((int)readI & (int)header.pixelformat.bbitmask) >> (int)blueR) << (int)blueL);
-
-                            if (bpp == 4)
-                            {
-                                ((ushort*)destData)[i + 3] = (ushort)((((int)readI & (int)header.pixelformat.alphabitmask) >> (int)alphaR) << (int)alphaL);
-                                if (alphaL >= 7)
-                                {
-                                    ((ushort*)destData)[i + 3] = (ushort)(((ushort*)destData)[i + 3] != 0 ? 0xFF : 0x00);
-                                }
-                                else if (alphaL >= 4)
-                                {
-                                    ((ushort*)destData)[i + 3] = (ushort)(((ushort*)destData)[i + 3] | (((ushort*)destData)[i + 3] >> 4));
-                                }
-                            }
-                        }
-                        else if (bpp == 2)
-                        {
-                            ((ushort*)destData)[i + 1] = (ushort)((((int)readI & (int)header.pixelformat.alphabitmask) >> (int)alphaR) << (int)alphaL);
-                            if (alphaL >= 7)
-                            {
-                                ((ushort*)destData)[i + 1] = (ushort)(((ushort*)destData)[i + 1] != 0 ? 0xFF : 0x00);
-                            }
-                            else if (alphaL >= 4)
-                            {
-                                ((ushort*)destData)[i + 1] = (ushort)(((ushort*)destData)[i + 1] | (rawData[i + 3] >> 4));
-                            }
-                        }
-                    }
-                }
-            }
-            return rawData;
-        }
-        #endregion
-
         #endregion
 
         #endregion
@@ -1825,42 +1574,30 @@ namespace PakReader
         #region Public Methods
         public void Dispose()
         {
-            if (this.m_bitmap != null)
+            if (BitmapImage != null)
             {
-                this.m_bitmap.Dispose();
-                this.m_bitmap = null;
+                BitmapImage.Dispose();
+                BitmapImage = null;
             }
         }
         #endregion
 
         #region Properties
         /// <summary>
-        /// Returns a System.Imaging.Bitmap containing the DDS image.
+        /// Returns a SkiaSharp.SKBitmap containing the DDS image.
         /// </summary>
-        public SKBitmap BitmapImage
-        {
-            get { return this.m_bitmap; }
-        }
+        public SKBitmap BitmapImage { get; private set; }
 
         /// <summary>
         /// Returns the DDS image is valid format.
         /// </summary>
-        public bool IsValid
-        {
-            get { return this.m_isValid; }
-        }
+        public bool IsValid { get; private set; }
         #endregion
 
         #region Operators
-        public static implicit operator DDSImage(SKBitmap value)
-        {
-            return new DDSImage(value);
-        }
+        public static implicit operator DDSImage(SKBitmap value) => new DDSImage(value);
 
-        public static explicit operator SKBitmap(DDSImage value)
-        {
-            return value.BitmapImage;
-        }
+        public static explicit operator SKBitmap(DDSImage value) => value.BitmapImage;
         #endregion
 
         #region Nested Types
@@ -1902,7 +1639,7 @@ namespace PakReader
             public uint[] reserved;//[11];
 
             [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-            public struct pixelformatstruct
+            public struct PixelFormatStruct
             {
                 public uint size;	// equals size of struct (which is part of the data file!)
                 public uint flags;
@@ -1913,17 +1650,17 @@ namespace PakReader
                 public uint bbitmask;
                 public uint alphabitmask;
             }
-            public pixelformatstruct pixelformat;
+            public PixelFormatStruct pixelformat;
 
             [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-            public struct ddscapsstruct
+            public struct DDSCapsStruct
             {
                 public uint caps1;
                 public uint caps2;
                 public uint caps3;
                 public uint caps4;
             }
-            public ddscapsstruct ddscaps;
+            public DDSCapsStruct ddscaps;
             public uint texturestage;
 
             //#ifndef __i386__
@@ -1942,40 +1679,16 @@ namespace PakReader
         #endregion
 
         #region DDSStruct Flags
-        private const int DDSD_CAPS = 0x00000001;
-        private const int DDSD_HEIGHT = 0x00000002;
-        private const int DDSD_WIDTH = 0x00000004;
-        private const int DDSD_PITCH = 0x00000008;
-        private const int DDSD_PIXELFORMAT = 0x00001000;
-        private const int DDSD_MIPMAPCOUNT = 0x00020000;
         private const int DDSD_LINEARSIZE = 0x00080000;
-        private const int DDSD_DEPTH = 0x00800000;
         #endregion
 
-        #region pixelformat values
+        #region PixelFormat values
         private const int DDPF_ALPHAPIXELS = 0x00000001;
         private const int DDPF_FOURCC = 0x00000004;
-        private const int DDPF_RGB = 0x00000040;
         private const int DDPF_LUMINANCE = 0x00020000;
         #endregion
 
-        #region ddscaps
-        // caps1
-        private const int DDSCAPS_COMPLEX = 0x00000008;
-        private const int DDSCAPS_TEXTURE = 0x00001000;
-        private const int DDSCAPS_MIPMAP = 0x00400000;
-        // caps2
-        private const int DDSCAPS2_CUBEMAP = 0x00000200;
-        private const int DDSCAPS2_CUBEMAP_POSITIVEX = 0x00000400;
-        private const int DDSCAPS2_CUBEMAP_NEGATIVEX = 0x00000800;
-        private const int DDSCAPS2_CUBEMAP_POSITIVEY = 0x00001000;
-        private const int DDSCAPS2_CUBEMAP_NEGATIVEY = 0x00002000;
-        private const int DDSCAPS2_CUBEMAP_POSITIVEZ = 0x00004000;
-        private const int DDSCAPS2_CUBEMAP_NEGATIVEZ = 0x00008000;
-        private const int DDSCAPS2_VOLUME = 0x00200000;
-        #endregion
-
-        #region fourccs
+        #region FourCCs
         private const uint FOURCC_DXT1 = 0x31545844;
         private const uint FOURCC_DXT2 = 0x32545844;
         private const uint FOURCC_DXT3 = 0x33545844;
@@ -2054,29 +1767,4 @@ namespace PakReader
 
         #endregion
     }
-    #endregion
-
-    #region Exceptions Class
-    /// <summary>
-    /// Thrown when an invalid file header has been encountered.
-    /// </summary>
-    internal class InvalidFileHeaderException : Exception
-    {
-    }
-
-    /// <summary>
-    /// Thrown when the data does not contain a DDS image.
-    /// </summary>
-    internal class NotADDSImageException : Exception
-    {
-
-    }
-
-    /// <summary>
-    /// Thrown when there is an unknown compressor used in the DDS file.
-    /// </summary>
-    internal class UnknownFileFormatException : Exception
-    {
-    }
-    #endregion
 }

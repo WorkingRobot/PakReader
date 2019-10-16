@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 
 namespace PakReader
 {
@@ -41,31 +42,27 @@ namespace PakReader
         }
     }
 
-    public struct FPakFile
+    public static class FPakFile
     {
-        public byte[] data;
-
-        const int EncryptionAlign = 16; // AES-specific constant
-        const int EncryptedBufferSize = 256; //?? TODO: check - may be value 16 will be better for performance
-
-        public FPakFile(BinaryReader Reader, BasePakEntry Info, byte[] key = null)
+        public static async Task<byte[]> GetDataAsync(Stream stream, FPakEntry entry, byte[] key = null)
         {
-            Reader.BaseStream.Seek(Info.Pos + Info.StructSize, SeekOrigin.Begin);
-            if (Info.Encrypted)
+            stream.Position = entry.Pos + entry.StructSize;
+            if (entry.Encrypted)
             {
-                long encSize = (Info.Size & 15) == 0 ? Info.Size : ((Info.Size / 16) + 1) * 16;
-                byte[] encBuffer = Reader.ReadBytes((int)encSize);
-                data = AESDecryptor.DecryptAES(encBuffer, (int)encSize, key, key.Length).SubArray(0, (int)Info.UncompressedSize);
-                if (encSize != Info.Size)
-                {
-                    data = data.SubArray(0, (int)Info.UncompressedSize);
-                }
+                int encSize = (int)((entry.Size & 15) == 0 ? entry.Size : ((entry.Size / 16) + 1) * 16);
+                byte[] encBuffer = new byte[encSize];
+                await stream.ReadAsync(encBuffer, 0, encSize).ConfigureAwait(false);
+                byte[] ret = AESDecryptor.DecryptAES(encBuffer, key);
+                if (encSize != entry.Size)
+                    Array.Resize(ref ret, (int)entry.UncompressedSize);
+                return ret;
             }
             else
             {
-                data = Reader.ReadBytes((int)Info.UncompressedSize);
+                byte[] ret = new byte[(int)entry.UncompressedSize];
+                await stream.ReadAsync(ret, 0, ret.Length).ConfigureAwait(false);
+                return ret;
             }
-            //File.WriteAllBytes(Path.GetFileName(info.Name), data);
             /*
             if (info.CompressionMethod != 0)
             {
@@ -90,13 +87,13 @@ namespace PakReader
                         byte[] CompressedData;
                         if (Info.bEncrypted == 0)
                         {
-                            Reader.BaseStream.Seek(Block.CompressedStart, SeekOrigin.Begin);
+                            Reader.BaseStream.Position = Block.CompressedStart;
                             CompressedData = Reader.ReadBytes(CompressedBlockSize);
                         }
                         else
                         {
                             int EncryptedSize = Align(CompressedBlockSize, EncryptionAlign);
-                            Reader.BaseStream.Seek(Block.CompressedStart, SeekOrigin.Begin);
+                            Reader.BaseStream.Position = Block.CompressedStart;
                             CompressedData = Reader.ReadBytes(EncryptedSize);
                             CompressedData = AESDecryptor.DecryptAES(CompressedData, EncryptedSize, key, key.Length);
                         }
@@ -142,7 +139,7 @@ namespace PakReader
                         // Should fetch block and decrypt it.
                         // Note: AES is block encryption, so we should always align read requests for correct decryption.
                         UncompressedBufferPos = ArPos & ~(EncryptionAlign - 1);
-                        Reader.BaseStream.Seek(Info.Pos + Info.StructSize + UncompressedBufferPos, SeekOrigin.Begin);
+                        Reader.BaseStream.Position = Info.Pos + Info.StructSize + UncompressedBufferPos;
                         int RemainingSize = (int)Info.Size;
                         if (RemainingSize >= 0)
                         {
@@ -179,13 +176,12 @@ namespace PakReader
                 // Pure data
                 // seek every time in a case if the same 'Reader' was used by different FPakFile
                 // (this is a lightweight operation for buffered FArchive)
-                Reader.BaseStream.Seek(Info.Pos + Info.StructSize, SeekOrigin.Begin);
+                Reader.BaseStream.Position = Info.Pos + Info.StructSize;
                 data = Reader.ReadBytes(size);
                 // ArPos += size;
-            }*/
+            }
+            */
         }
-
-        public Stream GetStream() => new MemoryStream(data);
     }
 
     internal enum PAK_VERSION
@@ -203,7 +199,7 @@ namespace PakReader
         PAK_LATEST = PAK_LATEST_PLUS_ONE - 1
     }
 
-    public abstract class BasePakEntry
+    public sealed class FPakEntry
     {
         public long Pos;
         public long Size;
@@ -211,19 +207,16 @@ namespace PakReader
         public bool Encrypted;
 
         public int StructSize;
-    }
 
-    public class FPakEntry : BasePakEntry
-    {
-        public string Name;
-        public int CompressionMethod;
+        // public string Name;
+        // public int CompressionMethod;
         // public byte[] Hash; // 20 bytes
         // public FPakCompressedBlock[] CompressionBlocks;
         // public int CompressionBlockSize;
 
-        public FPakEntry(BinaryReader reader, string mountPoint, int pakVersion)
+        public FPakEntry(BinaryReader reader, int pakVersion, out string name)
         {
-            Name = mountPoint + reader.ReadString(FPakInfo.MAX_PACKAGE_PATH);
+            name = reader.ReadFString(FPakInfo.MAX_PACKAGE_PATH);
 
             // FPakEntry is duplicated before each stored file, without a filename. So,
             // remember the serialized size of this structure to avoid recomputation later.
@@ -231,14 +224,15 @@ namespace PakReader
             Pos = reader.ReadInt64();
             Size = reader.ReadInt64();
             UncompressedSize = reader.ReadInt64();
-            CompressionMethod = reader.ReadInt32();
+            var CompressionMethod = reader.ReadInt32();
 
             if (pakVersion < (int)PAK_VERSION.PAK_NO_TIMESTAMPS)
             {
                 long timestamp = reader.ReadInt64();
             }
 
-            /*Hash = */reader.ReadBytes(20);
+            /*Hash = reader.ReadBytes(20);*/
+            reader.BaseStream.Position += 20;
 
             if (pakVersion >= (int)PAK_VERSION.PAK_COMPRESSION_ENCRYPTION)
             {
@@ -246,8 +240,9 @@ namespace PakReader
                 {
                     /*CompressionBlocks = */reader.ReadTArray(() => new FPakCompressedBlock(reader));
                 }
-                Encrypted = reader.ReadBoolean();
-                /* CompressionBlockSize = */reader.ReadInt32();
+                Encrypted = reader.BaseStream.ReadByte() != 0;
+                /* CompressionBlockSize = reader.ReadInt32();*/
+                reader.BaseStream.Position += 4;
             }
 
             if (pakVersion >= (int)PAK_VERSION.PAK_RELATIVE_CHUNK_OFFSETS)
@@ -326,7 +321,7 @@ namespace PakReader
 
         public FString(BinaryReader reader)
         {
-            str = AssetReader.read_string(reader);
+            str = reader.ReadFString();
         }
     }
 

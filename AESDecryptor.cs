@@ -1,49 +1,53 @@
 ﻿using System;
-using System.IO;
+using System.Collections.Generic;
 using System.Security.Cryptography;
 
 namespace PakReader
 {
-    class AESDecryptor
+    static class AESDecryptor
     {
-        const int AES_KEYBITS = 256;
-        const int KEY_LENGTH = AES_KEYBITS / 8;
+        const int BLOCK_SIZE = 16 * 8;
+        static readonly Rijndael Cipher;
 
-        public static byte[] DecryptAES(byte[] data, int size, byte[] key, int keyLen)
+        static AESDecryptor()
         {
-            if (keyLen <= 0)
-            {
-                keyLen = key.Length;
-            }
+            Cipher = Rijndael.Create();
+            Cipher.Mode = CipherMode.ECB;
+            Cipher.Padding = PaddingMode.Zeros;
+            Cipher.BlockSize = BLOCK_SIZE;
+        }
 
-            if (keyLen == 0)
-            {
-                throw new ArgumentOutOfRangeException("Trying to decrypt AES block without providing an AES key");
-            }
-            if (keyLen < KEY_LENGTH)
-            {
-                throw new ArgumentOutOfRangeException("AES key is too short");
-            }
+        static ICryptoTransform GetDecryptor(byte[] key) => Cipher.CreateDecryptor(key, null);
 
-            if ((size & 15) != 0)
+        public static int FindKey(byte[] data, IList<byte[]> keys)
+        {
+            byte[] block = new byte[BLOCK_SIZE];
+            for (int i = 0; i < keys.Count; i++)
             {
-                throw new ArgumentOutOfRangeException("Size is invalid");
+                using (var crypto = GetDecryptor(keys[i]))
+                    crypto.TransformBlock(data, 0, BLOCK_SIZE, block, 0);
+                int stringLen = BitConverter.ToInt32(block, 0);
+                if (stringLen > 512 || stringLen < -512)
+                    continue;
+                if (stringLen < 0)
+                {
+                    if (BitConverter.ToUInt16(block, (stringLen - 1) * 2 + 4) != 0)
+                        continue;
+                }
+                else
+                {
+                    if (block[stringLen - 1 + 4] != 0)
+                        continue;
+                }
+                return i;
             }
+            return -1;
+        }
 
-            byte[] ret = new byte[data.Length];
-            using (Rijndael cipher = Rijndael.Create())
-            {
-                cipher.Mode = CipherMode.ECB;
-                cipher.Padding = PaddingMode.Zeros;
-                cipher.Key = key;
-                cipher.BlockSize = 16 * 8;
-                using (var crypto = cipher.CreateDecryptor())
-                using (MemoryStream msDecrypt = new MemoryStream(data))
-                using (CryptoStream csDecrypt = new CryptoStream(msDecrypt, crypto, CryptoStreamMode.Read))
-                using (StreamReader srDecrypt = new StreamReader(csDecrypt))
-                    csDecrypt.Read(ret, 0, ret.Length);
-            }
-            return ret;
+        public static byte[] DecryptAES(byte[] data, byte[] key)
+        {
+            using (var crypto = GetDecryptor(key))
+                return crypto.TransformFinalBlock(data, 0, data.Length);
         }
     }
 }

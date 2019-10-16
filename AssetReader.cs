@@ -22,21 +22,21 @@ namespace PakReader
             BinaryReader reader = new BinaryReader(asset);
             var summary = new AssetSummary(reader);
 
-            reader.BaseStream.Seek(summary.name_offset, SeekOrigin.Begin);
+            reader.BaseStream.Position = summary.name_offset;
             FNameEntrySerialized[] name_map = new FNameEntrySerialized[summary.name_count];
             for (int i = 0; i < summary.name_count; i++)
             {
                 name_map[i] = new FNameEntrySerialized(reader);
             }
 
-            reader.BaseStream.Seek(summary.import_offset, SeekOrigin.Begin);
+            reader.BaseStream.Position = summary.import_offset;
             FObjectImport[] import_map = new FObjectImport[summary.import_count];
             for (int i = 0; i < summary.import_count; i++)
             {
                 import_map[i] = new FObjectImport(reader, name_map, import_map);
             }
 
-            reader.BaseStream.Seek(summary.export_offset, SeekOrigin.Begin);
+            reader.BaseStream.Position = summary.export_offset;
             FObjectExport[] export_map = new FObjectExport[summary.export_count];
             for (int i = 0; i < summary.export_count; i++)
             {
@@ -58,7 +58,7 @@ namespace PakReader
             {
                 string export_type = v.class_index.import;
                 long position = v.serial_offset - asset.Length;
-                reader.BaseStream.Seek(position, SeekOrigin.Begin);
+                reader.BaseStream.Position = position;
                 try
                 {
                     switch (export_type)
@@ -84,6 +84,20 @@ namespace PakReader
                         case "Skeleton":
                             Exports[ind] = new USkeleton(reader, name_map, import_map);
                             break;
+                        /*
+                        case "WidgetBlueprintGeneratedClass":
+                            Exports[ind] = new UBlueprint(reader, name_map, import_map);
+                            break;
+                        case "BoolProperty":
+                        case "ObjectProperty":
+                        case "ByteProperty":
+                        case "EnumProperty":
+                        case "StructProperty":
+                        case "TextProperty":
+                            Exports[ind] = read_property_tag(reader, name_map, import_map, true);
+                            break;
+                        case "Function":
+                        */
                         default:
                             Exports[ind] = new UObject(reader, name_map, import_map, export_type, true);
                             break;
@@ -91,6 +105,7 @@ namespace PakReader
                 }
                 catch (Exception e)
                 {
+                    Console.WriteLine(e);
                     if (!ignoreErrors)
                         throw e;
                 }
@@ -98,7 +113,7 @@ namespace PakReader
                 if (reader.BaseStream.Position != valid_pos)
                 {
                     Console.WriteLine($"Did not read {export_type} correctly. Current Position: {reader.BaseStream.Position}, Bytes Remaining: {valid_pos - reader.BaseStream.Position}");
-                    reader.BaseStream.Seek(valid_pos, SeekOrigin.Begin);
+                    reader.BaseStream.Position = valid_pos;
                 }
                 ind++;
             }
@@ -136,43 +151,6 @@ namespace PakReader
                 result[2 * i + 1] = (char)(val >> 16);
             }
             return new string(result);
-        }
-
-        internal static string read_string(BinaryReader reader)
-        {
-            int length = reader.ReadInt32();
-            if (length > 65536 || length < -65536)
-            {
-                throw new IOException($"String length too large ({length}), likely a read error.");
-            }
-            if (length < 0)
-            {
-                length *= -1;
-                ushort[] data = new ushort[length];
-                for (int i = 0; i < length; i++)
-                {
-                    data[i] = reader.ReadUInt16();
-                }
-                unsafe
-                {
-                    fixed (ushort* dataPtr = &data[0])
-                        return new string((char*)dataPtr, 0, data.Length);
-                }
-            }
-            else
-            {
-                byte[] bytes = reader.ReadBytes(length);
-                if (bytes.Length == 0) return string.Empty;
-                var ret = Encoding.UTF8.GetString(bytes);
-                if (ret.Length != length)
-                {
-                    return ret;
-                }
-                else
-                {
-                    return ret.Substring(0, length - 1);
-                }
-            }
         }
 
         public static T[] read_tarray<T>(BinaryReader reader, Func<BinaryReader, T> getter)
@@ -274,7 +252,7 @@ namespace PakReader
 
             if (read_data)
             {
-                reader.BaseStream.Seek(pos + size, SeekOrigin.Begin);
+                reader.BaseStream.Position = pos + size;
             }
             if (read_data && pos + size != reader.BaseStream.Position)
             {
@@ -314,7 +292,7 @@ namespace PakReader
                 case "TextProperty":
                     return (FPropertyTagType.TextProperty, new FText(reader));
                 case "StrProperty":
-                    return (FPropertyTagType.StrProperty, read_string(reader));
+                    return (FPropertyTagType.StrProperty, reader.ReadFString());
                 case "NameProperty":
                     return (FPropertyTagType.NameProperty, read_fname(reader, name_map));
                 case "IntProperty":
@@ -353,7 +331,7 @@ namespace PakReader
                 file_version_licensee_ue4 = reader.ReadInt32();
                 custom_version_container = reader.ReadTArray(() => new FCustomVersion(reader));
                 total_header_size = reader.ReadInt32();
-                folder_name = read_string(reader);
+                folder_name = reader.ReadFString();
                 package_flags = reader.ReadUInt32();
                 name_count = reader.ReadInt32();
                 name_offset = reader.ReadInt32();
@@ -375,15 +353,14 @@ namespace PakReader
                 compression_flags = reader.ReadUInt32();
                 compressed_chunks = reader.ReadTArray(() => new FCompressedChunk(reader));
                 package_source = reader.ReadUInt32();
-                additional_packages_to_cook = reader.ReadTArray(() => read_string(reader));
+                additional_packages_to_cook = reader.ReadTArray(() => reader.ReadFString());
                 asset_registry_data_offset = reader.ReadInt32();
                 buld_data_start_offset = reader.ReadInt32();
                 world_tile_info_data_offset = reader.ReadInt32();
                 chunk_ids = reader.ReadTArray(() => reader.ReadInt32());
                 preload_dependency_count = reader.ReadInt32();
                 preload_dependency_offset = reader.ReadInt32();
-                var pos = reader.BaseStream.Position;
-                reader.BaseStream.Seek(0, SeekOrigin.Begin);
+                reader.BaseStream.Position = 0;
             }
 
             public int tag;
@@ -462,7 +439,7 @@ namespace PakReader
                 minor = reader.ReadUInt16();
                 patch = reader.ReadUInt16();
                 changelist = reader.ReadUInt32();
-                branch = read_string(reader);
+                branch = reader.ReadFString();
             }
         }
 
@@ -526,7 +503,7 @@ namespace PakReader
 
             internal FNameEntrySerialized(BinaryReader reader)
             {
-                data = read_string(reader);
+                data = reader.ReadFString();
                 non_case_preserving_hash = reader.ReadUInt16();
                 case_preserving_hash = reader.ReadUInt16();
             }
@@ -562,7 +539,7 @@ namespace PakReader
                 size_x = reader.ReadInt32();
                 size_y = reader.ReadInt32();
                 num_slices = reader.ReadInt32();
-                pixel_format = read_string(reader);
+                pixel_format = reader.ReadFString();
                 first_mip = reader.ReadInt32();
                 mips = new FTexture2DMipMap[reader.ReadUInt32()];
                 for (int i = 0; i < mips.Length; i++)
@@ -587,9 +564,7 @@ namespace PakReader
                 size_y = reader.ReadInt32();
                 size_z = reader.ReadInt32();
                 if (cooked != 1)
-                {
-                    read_string(reader);
-                }
+                    reader.ReadFString();
             }
         }
 
@@ -614,7 +589,7 @@ namespace PakReader
                         throw new IOException("No ubulk specified for texture");
                     }
                     // Archive seems "kind of" appended.
-                    ubulk.BaseStream.Seek(header.offset_in_file + bulk_offset, SeekOrigin.Begin);
+                    ubulk.BaseStream.Position = header.offset_in_file + bulk_offset;
                     data = ubulk.ReadBytes(header.element_count);
                 }
 
@@ -1460,7 +1435,7 @@ namespace PakReader
 
                     int elem_size = reader.ReadInt32(); // umodel has this, might want to actually serialize this like how ue4 has it
                     int count = reader.ReadInt32();
-                    reader.BaseStream.Seek(elem_size * count, SeekOrigin.Current);
+                    reader.BaseStream.Position += elem_size * count;
 
                     cloth_index_mapping = reader.ReadTArray(() => reader.ReadUInt64());
                 }
@@ -1578,7 +1553,7 @@ namespace PakReader
             {
                 key_guid = new FGuid(reader);
                 object_id = new FGuid(reader);
-                object_path = read_string(reader);
+                object_path = reader.ReadFString();
             }
         }
 
@@ -1715,7 +1690,7 @@ namespace PakReader
                 case "BoolProperty":
                     return reader.ReadByte() != 1;
                 case "ByteProperty":
-                    return reader.ReadByte();
+                    return (byte)reader.ReadUInt32();
                 case "EnumProperty":
                     return read_fname(reader, name_map);
                 case "UInt32Property":
@@ -1726,8 +1701,10 @@ namespace PakReader
                     return read_fname(reader, name_map);
                 case "ObjectProperty":
                     return new FPackageIndex(reader, import_map);
+                case "SoftObjectProperty":
+                    return new FGuid(reader);
                 case "StrProperty":
-                    return read_string(reader);
+                    return reader.ReadFString();
                 case "TextProperty":
                     return new FText(reader);
                 default:
@@ -1772,15 +1749,13 @@ namespace PakReader
         [JsonIgnore]
         public FPropertyTagType tag;
 
-        public bool Equals(FPropertyTag b)
-        {
-            return name == b.name &&
-                property_type == b.property_type &&
-                size == b.size &&
-                array_index == b.array_index &&
-                tag == b.tag &&
-                tag_data == b.tag_data;
-        }
+        public bool Equals(FPropertyTag b) =>
+            name == b.name &&
+            property_type == b.property_type &&
+            size == b.size &&
+            array_index == b.array_index &&
+            tag == b.tag &&
+            tag_data == b.tag_data;
     }
 
     public struct UScriptStruct
@@ -2125,7 +2100,7 @@ namespace PakReader
         internal FSoftObjectPath(BinaryReader reader, FNameEntrySerialized[] name_map)
         {
             asset_path_name = read_fname(reader, name_map);
-            sub_path_string = read_string(reader);
+            sub_path_string = reader.ReadFString();
         }
     }
 
@@ -2154,7 +2129,7 @@ namespace PakReader
         {
             key_guid = new FGuid(reader);
             object_id = new FGuid(reader);
-            object_path = read_string(reader);
+            object_path = reader.ReadFString();
         }
     }
 
@@ -2385,7 +2360,7 @@ namespace PakReader
         static void align_reader(BinaryReader reader)
         {
             var pos = reader.BaseStream.Position % 4;
-            if (pos != 0) reader.BaseStream.Seek(4 - pos, SeekOrigin.Current);
+            if (pos != 0) reader.BaseStream.Position += 4 - pos;
         }
 
         static float[] read_times(BinaryReader reader, uint num_keys, uint num_frames)
@@ -2665,6 +2640,28 @@ namespace PakReader
         }
     }
 
+    public sealed class UFunction : ExportObject
+    {
+        public UObject super_object;
+
+        internal UFunction(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        {
+            super_object = new UObject(reader, name_map, import_map, "UBlueprint", true);
+
+        }
+    }
+
+    public sealed class UBlueprint : ExportObject
+    {
+        public UObject super_object;
+        
+        internal UBlueprint(BinaryReader reader, FNameEntrySerialized[] name_map, FObjectImport[] import_map)
+        {
+            super_object = new UObject(reader, name_map, import_map, "UBlueprint", true);
+            var skeleton_object = new UObject(reader, name_map, import_map, "UObject", true);
+        }
+    }
+
     public sealed class USkeletalMesh : ExportObject
     {
         public UObject BaseObject;
@@ -2833,9 +2830,9 @@ namespace PakReader
             }
             else if (history_type == 0)
             {
-                @namespace = read_string(reader);
-                key = read_string(reader);
-                source_string = read_string(reader);
+                @namespace = reader.ReadFString();
+                key = reader.ReadFString();
+                source_string = reader.ReadFString();
             }
             else
             {

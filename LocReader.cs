@@ -1,6 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
 
 namespace PakReader
 {
@@ -18,22 +18,19 @@ namespace PakReader
 
         public LocResFile(BinaryReader reader)
         {
-            FGuid MagicNumber = default;
-
-            if (reader.BaseStream.Length >= Marshal.SizeOf<FGuid>())
+            long StartPos = reader.BaseStream.Position;
+            var VersionNumber = LocResVersion.LEGACY;
             {
-                MagicNumber = new FGuid(reader);
-            }
-
-            LocResVersion VersionNumber = LocResVersion.LEGACY;
-            if (MagicNumber == LocResMagic)
-            {
-                VersionNumber = (LocResVersion)reader.ReadByte();
-            }
-            else
-            {
-                // Legacy LocRes files lack the magic number, assume that's what we're dealing with, and seek back to the start of the file
-                reader.BaseStream.Seek(0, SeekOrigin.Begin);
+                var guid = new FGuid(reader);
+                if (guid == LocResMagic)
+                {
+                    VersionNumber = (LocResVersion)reader.ReadByte();
+                }
+                else
+                {
+                    // Legacy LocRes files lack the magic number, assume that's what we're dealing with, and seek back to the start of the file
+                    reader.BaseStream.Position = StartPos;
+                }
             }
 
             if (VersionNumber > LocResVersion.LATEST)
@@ -42,34 +39,37 @@ namespace PakReader
             }
 
             // Read the localized string array
-            FTextLocalizationResourceString[] LocalizedStringArray = new FTextLocalizationResourceString[0];
+            var LocalizedStringArray = new FTextLocalizationResourceString[0];
             if (VersionNumber >= LocResVersion.COMPACT)
             {
-                long LocalizedStringArrayOffset = -1; // INDEX_NONE
-                LocalizedStringArrayOffset = reader.ReadInt64();
-
+                long LocalizedStringArrayOffset = reader.ReadInt64();
+                if (LocalizedStringArrayOffset > int.MaxValue)
+                {
+                    Console.WriteLine("bruh "+reader.BaseStream.Position);
+                    throw new FileLoadException();
+                }
                 if (LocalizedStringArrayOffset != -1)
                 {
                     if (VersionNumber >= LocResVersion.OPTIMIZED)
                     {
                         long CurrentFileOffset = reader.BaseStream.Position;
-                        reader.BaseStream.Seek(LocalizedStringArrayOffset, SeekOrigin.Begin);
+                        reader.BaseStream.Position = StartPos + LocalizedStringArrayOffset;
                         LocalizedStringArray = reader.ReadTArray(() => new FTextLocalizationResourceString(reader));
-                        reader.BaseStream.Seek(CurrentFileOffset, SeekOrigin.Begin);
+                        reader.BaseStream.Position = CurrentFileOffset;
                     }
                     else
                     {
                         string[] TmpLocalizedStringArray;
 
                         long CurrentFileOffset = reader.BaseStream.Position;
-                        reader.BaseStream.Seek(LocalizedStringArrayOffset, SeekOrigin.Begin);
-                        TmpLocalizedStringArray = reader.ReadTArray(() => CleanString(AssetReader.read_string(reader)));
-                        reader.BaseStream.Seek(CurrentFileOffset, SeekOrigin.Begin);
+                        reader.BaseStream.Position = StartPos + LocalizedStringArrayOffset;
+                        TmpLocalizedStringArray = reader.ReadTArray(() => CleanString(reader.ReadFString()));
+                        reader.BaseStream.Position = CurrentFileOffset;
 
                         LocalizedStringArray = new FTextLocalizationResourceString[TmpLocalizedStringArray.Length];
                         for (int i = 0; i < TmpLocalizedStringArray.Length; i++)
                         {
-                            LocalizedStringArray[i] = new FTextLocalizationResourceString() { String = TmpLocalizedStringArray[i], RefCount = -1 };
+                            LocalizedStringArray[i] = new FTextLocalizationResourceString { String = TmpLocalizedStringArray[i], RefCount = -1 };
                         }
                     }
                 }
@@ -89,16 +89,7 @@ namespace PakReader
             for (uint i = 0; i < NamespaceCount; i++)
             {
                 // Read namespace
-                FTextKey Namespace;
-                if (VersionNumber >= LocResVersion.OPTIMIZED)
-                {
-                    Namespace = new FTextKey(reader);
-                }
-                else
-                {
-                    Namespace = new FTextKey(CleanString(AssetReader.read_string(reader)));
-                }
-
+                var Namespace = VersionNumber >= LocResVersion.OPTIMIZED ? new FTextKey(reader) : new FTextKey(CleanString(reader.ReadFString()));
                 var Entries = new Dictionary<string, string>();
 
                 // Read key count
@@ -107,16 +98,7 @@ namespace PakReader
                 for (uint j = 0; j < KeyCount; j++)
                 {
                     // Read key
-                    FTextKey Key;
-                    if (VersionNumber >= LocResVersion.OPTIMIZED)
-                    {
-                        Key = new FTextKey(reader);
-                    }
-                    else
-                    {
-                        Key = new FTextKey(CleanString(AssetReader.read_string(reader)));
-                    }
-
+                    var Key = VersionNumber >= LocResVersion.OPTIMIZED ? new FTextKey(reader) : new FTextKey(CleanString(reader.ReadFString()));
                     FEntry NewEntry;
                     NewEntry.SourceStringHash = reader.ReadUInt32();
 
@@ -127,7 +109,7 @@ namespace PakReader
                         if (LocalizedStringArray.Length > LocalizedStringIndex)
                         {
                             // Steal the string if possible
-                            FTextLocalizationResourceString LocalizedString = LocalizedStringArray[LocalizedStringIndex];
+                            var LocalizedString = LocalizedStringArray[LocalizedStringIndex];
                             if (LocalizedString.RefCount == 1)
                             {
                                 NewEntry.LocalizedString = LocalizedString.String;
@@ -149,9 +131,8 @@ namespace PakReader
                     }
                     else
                     {
-                        NewEntry.LocalizedString = CleanString(AssetReader.read_string(reader));
+                        NewEntry.LocalizedString = CleanString(reader.ReadFString());
                     }
-
                     Entries.Add(Key.String, NewEntry.LocalizedString);
                 }
                 this.Entries.Add(Namespace.String, Entries);
@@ -179,14 +160,12 @@ namespace PakReader
 
         public LocMetaFile(BinaryReader reader)
         {
-            LocMetaVersion VersionNumber = LocMetaVersion.INITIAL;
-
             if (LocMetaMagic != new FGuid(reader))
             {
                 throw new IOException("LocMeta file has an invalid magic constant!");
             }
 
-            VersionNumber = (LocMetaVersion)reader.ReadByte();
+            var VersionNumber = (LocMetaVersion)reader.ReadByte();
             if (VersionNumber > LocMetaVersion.LATEST)
             {
                 throw new IOException($"LocMeta file is too new to be loaded! (File Version: {(byte)VersionNumber}, Loader Version: {(byte)LocMetaVersion.LATEST})");
@@ -212,7 +191,7 @@ namespace PakReader
         public FTextKey(BinaryReader reader)
         {
             StrHash = reader.ReadUInt32();
-            String = LocResFile.CleanString(AssetReader.read_string(reader));
+            String = LocResFile.CleanString(reader.ReadFString());
         }
 
         public FTextKey(string str)
@@ -229,7 +208,7 @@ namespace PakReader
 
         public FTextLocalizationResourceString(BinaryReader reader)
         {
-            String = LocResFile.CleanString(AssetReader.read_string(reader));
+            String = LocResFile.CleanString(reader.ReadFString());
             RefCount = reader.ReadInt32();
         }
 

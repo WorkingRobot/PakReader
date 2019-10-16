@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using Newtonsoft.Json;
 using static PakReader.AssetReader;
 
 namespace PakReader
@@ -20,8 +22,9 @@ namespace PakReader
             var Version = FAssetRegistryVersion.DeserializeVersion(reader);
             if (Version < FAssetRegistryVersion.Type.AddedCookedMD5Hash)
             {
-                throw new FileLoadException("Cannot read states before this version");
+                //throw new FileLoadException("Cannot read states before this version");
             }
+            reader.BaseStream.Position = 2037952;
 
             var nameReader = new FNameTableArchiveReader(reader);
 
@@ -40,11 +43,11 @@ namespace PakReader
                 PreallocatedDependsNodeDataBuffer[i] = new FDependsNode();
             }
 
-            SortedList<EAssetRegistryDependencyType, int> DepCounts = new SortedList<EAssetRegistryDependencyType, int>();
+            var DepCounts = new SortedList<EAssetRegistryDependencyType, int>();
 
             for (int i = 0; i < LocalNumDependsNodes; i++)
             {
-                FAssetIdentifier AssetIdentifier = new FAssetIdentifier(nameReader);
+                var AssetIdentifier = new FAssetIdentifier(nameReader);
 
                 DepCounts[EAssetRegistryDependencyType.Hard] = reader.ReadInt32();
                 DepCounts[EAssetRegistryDependencyType.Soft] = reader.ReadInt32();
@@ -74,14 +77,14 @@ namespace PakReader
                     {
                         throw new FileLoadException("could you please serialize your assetregistry correctly");
                     }
-                    PreallocatedDependsNodeDataBuffer[AssetIndex].Add(index, InDependencyType);
+                    PreallocatedDependsNodeDataBuffer[AssetIndex].Add(PreallocatedDependsNodeDataBuffer[index], InDependencyType);
                 }
             }
 
             int LocalNumPackageData = reader.ReadInt32();
             PreallocatedPackageDataBuffer = new FAssetPackageData[LocalNumPackageData];
 
-            var bSerializeHash = Version < FAssetRegistryVersion.Type.AddedCookedMD5Hash;
+            var bSerializeHash = Version <= FAssetRegistryVersion.Type.AddedCookedMD5Hash;
             for (int i = 0; i < LocalNumPackageData; i++)
             {
                 PreallocatedPackageDataBuffer[i] = new FAssetPackageData(nameReader, bSerializeHash);
@@ -114,7 +117,8 @@ namespace PakReader
             {
                 return (Type)reader.ReadInt32();
             }
-            return default;
+            return (Type)reader.ReadInt32();
+            //return default;
         }
     }
 
@@ -158,15 +162,15 @@ namespace PakReader
         }
     }
 
-    public class FDependsNode
+    public sealed class FDependsNode
     {
         public FAssetIdentifier Identifier { get; set; }
-        public List<int> HardDependencies;
-        public List<int> SoftDependencies;
-        public List<int> NameDependencies;
-        public List<int> SoftManageDependencies;
-        public List<int> HardManageDependencies;
-        public List<int> Referencers;
+        public List<FDependsNode> HardDependencies;
+        public List<FDependsNode> SoftDependencies;
+        public List<FDependsNode> NameDependencies;
+        public List<FDependsNode> SoftManageDependencies;
+        public List<FDependsNode> HardManageDependencies;
+        public List<FDependsNode> Referencers;
 
         internal void Reserve(SortedList<EAssetRegistryDependencyType, int> list)
         {
@@ -175,28 +179,28 @@ namespace PakReader
                 switch (kv.Key)
                 {
                     case EAssetRegistryDependencyType.Soft:
-                        SoftDependencies = new List<int>(kv.Value);
+                        SoftDependencies = new List<FDependsNode>(kv.Value);
                         break;
                     case EAssetRegistryDependencyType.Hard:
-                        HardDependencies = new List<int>(kv.Value);
+                        HardDependencies = new List<FDependsNode>(kv.Value);
                         break;
                     case EAssetRegistryDependencyType.SearchableName:
-                        NameDependencies = new List<int>(kv.Value);
+                        NameDependencies = new List<FDependsNode>(kv.Value);
                         break;
                     case EAssetRegistryDependencyType.SoftManage:
-                        SoftManageDependencies = new List<int>(kv.Value);
+                        SoftManageDependencies = new List<FDependsNode>(kv.Value);
                         break;
                     case EAssetRegistryDependencyType.HardManage:
-                        HardManageDependencies = new List<int>(kv.Value);
+                        HardManageDependencies = new List<FDependsNode>(kv.Value);
                         break;
                     case 0:
-                        Referencers = new List<int>(kv.Value);
+                        Referencers = new List<FDependsNode>(kv.Value);
                         break;
                 }
             }
         }
 
-        internal void Add(int node, EAssetRegistryDependencyType type)
+        internal void Add(FDependsNode node, EAssetRegistryDependencyType type)
         {
             switch (type)
             {
@@ -243,10 +247,8 @@ namespace PakReader
     {
         public byte[] Hash;
 
-        public FMD5Hash(BinaryReader reader)
-        {
+        public FMD5Hash(BinaryReader reader) =>
             Hash = reader.ReadUInt32() != 0 ? reader.ReadBytes(16) : null;
-        }
     }
 
     public class FAssetIdentifier
@@ -288,7 +290,7 @@ namespace PakReader
             int l = reader.Reader.ReadInt32();
             for(int i = 0; i < l; i++)
             {
-                Map.Add(reader.ReadFName(), reader.Reader.ReadString(-1));
+                Map.Add(reader.ReadFName(), reader.Reader.ReadFString(-1));
             }
         }
     }
@@ -313,11 +315,11 @@ namespace PakReader
             }
 
             long OriginalOffset = reader.BaseStream.Position;
-            reader.BaseStream.Seek(NameOffset, SeekOrigin.Begin);
+            reader.BaseStream.Position = NameOffset;
 
             NameMap = reader.ReadTArray(() => new FNameEntrySerialized(reader));
 
-            reader.BaseStream.Seek(OriginalOffset, SeekOrigin.Begin);
+            reader.BaseStream.Position = OriginalOffset;
         }
 
         public string ReadFName() => read_fname(Reader, NameMap);
