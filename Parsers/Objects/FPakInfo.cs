@@ -20,7 +20,7 @@ namespace PakReader.Parsers.Objects
         public readonly FGuid EncryptionKeyGuid;        //  16 bytes
         public readonly string[] CompressionMethods;    // 160 bytes
                                                         // 221 bytes total
-        
+
         // I calculate the size myself instead of asking for an input version
         // https://github.com/EpicGames/UnrealEngine/blob/8b6414ae4bca5f93b878afadcc41ab518b09984f/Engine/Source/Runtime/PakFile/Public/IPlatformFilePak.h#L138
         internal const int SERIALIZED_SIZE = 221;

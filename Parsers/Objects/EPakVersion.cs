@@ -12,6 +12,8 @@
         DELETE_RECORDS = 6,                 // UE4.21+ - this constant is not used in UE4 code
         ENCRYPTION_KEY_GUID = 7,            // ... allows to use multiple encryption keys over the single project
         FNAME_BASED_COMPRESSION_METHOD = 8, // UE4.22+ - use string instead of enum for compression method
+        FROZEN_INDEX = 9,
+        PATH_HASH_INDEX = 10,
 
 
         LAST,

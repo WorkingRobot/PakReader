@@ -12,5 +12,11 @@ namespace PakReader.Parsers.Objects
             CompressedStart = reader.ReadInt64();
             CompressedEnd = reader.ReadInt64();
         }
+
+        internal FPakCompressedBlock(long start, long end)
+        {
+            CompressedStart = start;
+            CompressedEnd = end;
+        }
     }
 }

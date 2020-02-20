@@ -107,6 +107,19 @@ namespace PakReader.Parsers.Objects
             StructSize = (int)(reader.BaseStream.Position - StartOffset);
         }
 
+        internal FPakEntry(long offset, long size, long uncompressedSize, byte[] hash, FPakCompressedBlock[] compressionBlocks, uint compressionBlockSize, uint compressionMethodIndex, byte flags)
+        {
+            Offset = offset;
+            Size = size;
+            UncompressedSize = uncompressedSize;
+            Hash = hash;
+            CompressionBlocks = compressionBlocks;
+            CompressionBlockSize = compressionBlockSize;
+            CompressionMethodIndex = compressionMethodIndex;
+            Flags = flags;
+            StructSize = (int)GetSize(EPakVersion.LATEST, compressionMethodIndex, (uint)compressionBlocks.Length);
+        }
+
         public ArraySegment<byte> GetData(Stream stream, byte[] key)
         {
             if (CompressionMethodIndex != 0)
@@ -127,6 +140,35 @@ namespace PakReader.Parsers.Objects
                     return new ArraySegment<byte>(data);
                 }
             }
+        }
+
+        public static long GetSize(EPakVersion version, uint CompressionMethodIndex = 0, uint CompressionBlocksCount = 0)
+        {
+            long SerializedSize = sizeof(long) + sizeof(long) + sizeof(long) + 20;
+
+            if (version >= EPakVersion.FNAME_BASED_COMPRESSION_METHOD)
+            {
+                SerializedSize += sizeof(uint);
+            }
+            else
+            {
+                SerializedSize += sizeof(int); // Old CompressedMethod var from pre-fname based compression methods
+            }
+
+            if (version >= EPakVersion.COMPRESSION_ENCRYPTION)
+            {
+                SerializedSize += sizeof(byte) + sizeof(uint);
+                if (CompressionMethodIndex != 0)
+                {
+                    SerializedSize += sizeof(long) * 2 * CompressionBlocksCount + sizeof(int);
+                }
+            }
+            if (version < EPakVersion.NO_TIMESTAMPS)
+            {
+                // Timestamp
+                SerializedSize += sizeof(long);
+            }
+            return SerializedSize;
         }
     }
 }
