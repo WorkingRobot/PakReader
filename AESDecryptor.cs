@@ -6,8 +6,9 @@ namespace PakReader
 {
     static class AESDecryptor
     {
-        const int BLOCK_SIZE = 16 * 8;
+        const int BLOCK_SIZE = 16 * 8; // 128
         static readonly Rijndael Cipher;
+        static readonly Dictionary<byte[], ICryptoTransform> CachedTransforms = new Dictionary<byte[], ICryptoTransform>();
 
         static AESDecryptor()
         {
@@ -17,7 +18,14 @@ namespace PakReader
             Cipher.BlockSize = BLOCK_SIZE;
         }
 
-        static ICryptoTransform GetDecryptor(byte[] key) => Cipher.CreateDecryptor(key, null);
+        static ICryptoTransform GetDecryptor(byte[] key)
+        {
+            if (!CachedTransforms.TryGetValue(key, out var ret))
+            {
+                CachedTransforms[key] = ret = Cipher.CreateDecryptor(key, null);
+            }
+            return ret;
+        }
 
         public static int FindKey(byte[] data, IList<byte[]> keys)
         {
@@ -44,10 +52,7 @@ namespace PakReader
             return -1;
         }
 
-        public static byte[] DecryptAES(byte[] data, byte[] key)
-        {
-            using (var crypto = GetDecryptor(key))
-                return crypto.TransformFinalBlock(data, 0, data.Length);
-        }
+        public static byte[] DecryptAES(byte[] data, byte[] key) =>
+            GetDecryptor(key).TransformFinalBlock(data, 0, data.Length);
     }
 }

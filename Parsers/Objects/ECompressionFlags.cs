@@ -29,5 +29,5 @@
 
         /** Set of flags that are options are still allowed								*/
         COMPRESS_OptionsFlagsMask = 0xF0,
-    };
+    }
 }

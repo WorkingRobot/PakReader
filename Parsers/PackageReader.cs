@@ -1,31 +1,40 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Text;
+using System.Linq;
 using PakReader.Parsers.Objects;
 
 namespace PakReader.Parsers
 {
-    public class PackageReader
+    public sealed class PackageReader
     {
-        public string PackageFilename;
-        public BinaryReader Loader;
-        public Objects.FPackageFileSummary PackageFileSummary;
-        internal FName[] NameMap;
-        public long PackageFileSize;
+        BinaryReader Loader { get; }
 
-        public PackageReader(BinaryReader uasset, BinaryReader uexp)
+        public FPackageFileSummary PackageFileSummary { get; }
+        FNameEntrySerialized[] NameMap { get; }
+        public FObjectImport[] ImportMap { get; }
+        public FObjectExport[] ExportMap { get; }
+
+        public UObject[] Exports { get; }
+
+        public PackageReader(string path) : this(path + ".uasset", path + ".uexp", path + ".ubulk") { }
+        public PackageReader(string uasset, string uexp, string ubulk) : this(File.OpenRead(uasset), File.OpenRead(uexp), File.Exists(ubulk) ? File.OpenRead(ubulk) : null) { }
+        public PackageReader(Stream uasset, Stream uexp, Stream ubulk) : this(new BinaryReader(uasset), new BinaryReader(uexp), ubulk) { }
+
+        PackageReader(BinaryReader uasset, BinaryReader uexp, Stream ubulk)
         {
             Loader = uasset;
-            PackageFileSummary = new Objects.FPackageFileSummary(Loader);
+            PackageFileSummary = new FPackageFileSummary(Loader);
 
-            SerializeNameMap();
-            var ImportMap = SerializeImportMap();
-            var ExportMap = SerializeExportMap();
-            foreach(var Export in ExportMap)
+            NameMap = SerializeNameMap();
+            ImportMap = SerializeImportMap();
+            ExportMap = SerializeExportMap();
+            Exports = new UObject[ExportMap.Length];
+            Loader = uexp;
+            for(int i = 0; i < ExportMap.Length; i++)
             {
-                
-                //if (Export.bIsAsset)
+                var Export = ExportMap[i];
+                // Serialize everything, not just specifically assets
+                // if (Export.bIsAsset)
                 {
                     // We need to get the class name from the import/export maps
                     FName ObjectClassName;
@@ -38,26 +47,38 @@ namespace PakReader.Parsers
                     else
                         throw new FileLoadException("Can't get class name"); // Shouldn't reach this unless the laws of math have bent to MagmaReef's will
 
-                    
-                    Console.WriteLine($"Loading {ObjectClassName.Name}: {Export.bIsAsset}");
+
+                    var pos = Position = Export.SerialOffset - PackageFileSummary.TotalHeaderSize;
+                    Exports[i] = ObjectClassName.String switch
+                    {
+                        "Texture2D" => new Texture2D(this, ubulk, (int)(ExportMap.Sum(e => e.SerialSize) + PackageFileSummary.TotalHeaderSize)),
+                        _ => new UObject(this),
+                    };
+                    if (pos + Export.SerialSize != Position)
+                    {
+                        Console.WriteLine($"Didn't read {Export.ObjectName} ({ObjectClassName}) correctly (at {Position}, should be {pos + Export.SerialSize}, {pos + Export.SerialSize - Position} behind)");
+                    }
+                    Exports[i].ExportInfo = Export;
                 }
             }
             return;
         }
 
-        void SerializeNameMap()
+        FNameEntrySerialized[] SerializeNameMap()
         {
             if (PackageFileSummary.NameCount > 0)
             {
                 Loader.BaseStream.Position = PackageFileSummary.NameOffset;
 
-                NameMap = new FName[PackageFileSummary.NameCount];
+                var OutNameMap = new FNameEntrySerialized[PackageFileSummary.NameCount];
                 for (int NameMapIdx = 0; NameMapIdx < PackageFileSummary.NameCount; ++NameMapIdx)
                 {
                     // Read the name entry from the file.
-                    NameMap[NameMapIdx] = new FName(Loader);
+                    OutNameMap[NameMapIdx] = new FNameEntrySerialized(Loader);
                 }
+                return OutNameMap;
             }
+            return Array.Empty<FNameEntrySerialized>();
         }
 
         FObjectImport[] SerializeImportMap()
@@ -101,17 +122,19 @@ namespace PakReader.Parsers
             // Has some more complicated stuff related to name map pools etc. that seems unnecessary atm
             if (NameIndex >= 0 && NameIndex < NameMap.Length)
             {
-                return NameMap[NameIndex];
+                return new FName(NameMap[NameIndex], NameIndex, Number);
             }
-            throw new FileLoadException($"Bad Name Index {NameIndex}");
+            throw new FileLoadException($"Bad Name Index {NameIndex} - {Loader.BaseStream.Position}");
         }
 
 
         public static implicit operator BinaryReader(PackageReader reader) => reader.Loader;
 
         public byte ReadByte() => Loader.ReadByte();
+        public sbyte ReadSByte() => Loader.ReadSByte();
         public byte[] ReadBytes(int count) => Loader.ReadBytes(count);
         public string ReadFString() => Loader.ReadFString();
+        public T[] ReadTArray<T>(Func<T> Getter) => Loader.ReadTArray(Getter);
 
         public short ReadInt16() => Loader.ReadInt16();
         public ushort ReadUInt16() => Loader.ReadUInt16();
@@ -119,6 +142,8 @@ namespace PakReader.Parsers
         public uint ReadUInt32() => Loader.ReadUInt32();
         public long ReadInt64() => Loader.ReadInt64();
         public ulong ReadUInt64() => Loader.ReadUInt64();
+        public float ReadFloat() => Loader.ReadSingle();
+        public double ReadDouble() => Loader.ReadDouble();
 
         public long Position { get => Loader.BaseStream.Position; set => Loader.BaseStream.Position = value; }
     }

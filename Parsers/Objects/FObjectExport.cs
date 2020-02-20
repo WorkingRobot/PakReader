@@ -1,40 +1,35 @@
 ﻿namespace PakReader.Parsers.Objects
 {
-    struct FObjectExport
+    public sealed class FObjectExport : FObjectResource
     {
-        // FObjectResource
-        public FName ObjectName;
-        public FPackageIndex OuterIndex;
+        public FPackageIndex ClassIndex { get; }
+        //public FPackageIndex ThisIndex { get; } unused for serialization
+        public FPackageIndex SuperIndex { get; }
+        public FPackageIndex TemplateIndex { get; }
+        public EObjectFlags ObjectFlags { get; }
+        public long SerialSize { get; }
+        public long SerialOffset { get; }
+        //public long ScriptSerializationStartOffset { get; }
+        //public long ScriptSerializationEndOffset { get; }
+        //public UObject Object { get; }
+        //public int HashNext { get; }
+        public bool bForcedExport { get; }
+        public bool bNotForClient { get; }
+        public bool bNotForServer { get; }
+        public bool bNotAlwaysLoadedForEditorGame { get; }
+        public bool bIsAsset { get; }
+        //public bool bExportLoadFailed { get; }
+        //public EDynamicType DynamicType { get; }
+        //public bool bWasFiltered { get; }
+        public FGuid PackageGuid { get; }
+        public uint PackageFlags { get; }
+        public int FirstExportDependency { get; }
+        public int SerializationBeforeSerializationDependencies { get; }
+        public int CreateBeforeSerializationDependencies { get; }
+        public int SerializationBeforeCreateDependencies { get; }
+        public int CreateBeforeCreateDependencies { get; }
 
-        // FObjectExport
-        public FPackageIndex ClassIndex;
-        //public FPackageIndex ThisIndex; unused for serialization
-        public FPackageIndex SuperIndex;
-        public FPackageIndex TemplateIndex;
-        public EObjectFlags ObjectFlags;
-        public long SerialSize;
-        public long SerialOffset;
-        //public long ScriptSerializationStartOffset;
-        //public long ScriptSerializationEndOffset;
-        //public UObject Object;
-        //public int HashNext;
-        public bool bForcedExport;
-        public bool bNotForClient;
-        public bool bNotForServer;
-        public bool bNotAlwaysLoadedForEditorGame;
-        public bool bIsAsset;
-        //public bool bExportLoadFailed;
-        //public EDynamicType DynamicType;
-        //public bool bWasFiltered;
-        public FGuid PackageGuid;
-        public uint PackageFlags;
-        public int FirstExportDependency;
-        public int SerializationBeforeSerializationDependencies;
-        public int CreateBeforeSerializationDependencies;
-        public int SerializationBeforeCreateDependencies;
-        public int CreateBeforeCreateDependencies;
-
-        public FObjectExport(PackageReader reader)
+        internal FObjectExport(PackageReader reader)
         {
             ClassIndex = new FPackageIndex(reader);
             SuperIndex = new FPackageIndex(reader);

@@ -2,13 +2,13 @@
 
 namespace PakReader.Parsers.Objects
 {
-    public class FCustomVersion
+    public readonly struct FCustomVersion
     {
-        public FGuid Key;
-        public int Version;
-        // public int ReferenceCount; unused in serialization
+        public readonly FGuid Key;
+        public readonly int Version;
+        //public readonly int ReferenceCount; unused in serialization
 
-        public FCustomVersion(BinaryReader reader)
+        internal FCustomVersion(BinaryReader reader)
         {
             Key = new FGuid(reader);
             Version = reader.ReadInt32();

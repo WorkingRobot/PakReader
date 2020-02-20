@@ -1,19 +1,14 @@
 ﻿namespace PakReader.Parsers.Objects
 {
-    struct FObjectImport
+    public sealed class FObjectImport : FObjectResource
     {
-        // FObjectResource
-        public FName ObjectName;
-        public FPackageIndex OuterIndex;
+        public FName ClassPackage { get; }
+        public FName ClassName { get; }
+        //public bool bImportPackageHandled { get; } unused for serialization
+        //public bool bImportSearchedFor { get; }
+        //public bool bImportFailed { get; }
 
-        // FObjectImport
-        public FName ClassPackage;
-        public FName ClassName;
-        //public bool bImportPackageHandled; unused for serialization
-        //public bool bImportSearchedFor;
-        //public bool bImportFailed;
-
-        public FObjectImport(PackageReader reader)
+        internal FObjectImport(PackageReader reader)
         {
             ClassPackage = reader.ReadFName();
             ClassName = reader.ReadFName();

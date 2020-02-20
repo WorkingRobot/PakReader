@@ -2,18 +2,18 @@
 
 namespace PakReader.Parsers.Objects
 {
-    public struct FEngineVersion
+    public readonly struct FEngineVersion
     {
         // FEngineVersionBase
-        public ushort Major;
-        public ushort Minor;
-        public ushort Patch;
-        public uint Changelist;
+        public readonly ushort Major;
+        public readonly ushort Minor;
+        public readonly ushort Patch;
+        public readonly uint Changelist;
 
         // FEngineVersion
-        public string Branch;
+        public readonly string Branch;
 
-        public FEngineVersion(BinaryReader reader)
+        internal FEngineVersion(BinaryReader reader)
         {
             Major = reader.ReadUInt16();
             Minor = reader.ReadUInt16();

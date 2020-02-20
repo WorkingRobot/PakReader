@@ -2,14 +2,14 @@
 
 namespace PakReader.Parsers.Objects
 {
-    struct FCompressedChunk
+    public readonly struct FCompressedChunk
     {
-        public int UncompressedOffset;
-        public int UncompressedSize;
-        public int CompressedOffset;
-        public int CompressedSize;
+        public readonly int UncompressedOffset;
+        public readonly int UncompressedSize;
+        public readonly int CompressedOffset;
+        public readonly int CompressedSize;
 
-        public FCompressedChunk(BinaryReader reader)
+        internal FCompressedChunk(BinaryReader reader)
         {
             UncompressedOffset = reader.ReadInt32();
             UncompressedSize = reader.ReadInt32();

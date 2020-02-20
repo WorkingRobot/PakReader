@@ -2,12 +2,12 @@
 
 namespace PakReader.Parsers.Objects
 {
-    public struct FGenerationInfo
+    public readonly struct FGenerationInfo
     {
-        public int ExportCount;
-        public int NameCount;
+        public readonly int ExportCount;
+        public readonly int NameCount;
 
-        public FGenerationInfo(BinaryReader reader)
+        internal FGenerationInfo(BinaryReader reader)
         {
             ExportCount = reader.ReadInt32();
             NameCount = reader.ReadInt32();

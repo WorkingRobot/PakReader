@@ -30,28 +30,28 @@
     <OutputPath>lib\</OutputPath>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.3-beta1" />
-    <PackageReference Include="SkiaSharp" Version="1.68.0" />
+    <None Remove="Pak\PakReader.cs~RF7224595c.TMP" />
   </ItemGroup>
   <ItemGroup>
-    <None Update="oo2core_5_win64.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
+    <PackageReference Include="SkiaSharp" Version="1.68.1.1" />
   </ItemGroup>
   <PropertyGroup>
     <ApplicationIcon />
     <OutputType>Library</OutputType>
     <StartupObject />
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <Copyright>Copyright © WorkingRobot 2019</Copyright>
+    <Copyright>Copyright © WorkingRobot 2020</Copyright>
     <PackageProjectUrl>https://github.com/WorkingRobot/PakReader</PackageProjectUrl>
     <RepositoryUrl>https://github.com/WorkingRobot/PakReader.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>unreal engine pak parsing uasset uexp fortnite</PackageTags>
-    <AssemblyVersion>1.2.0.0</AssemblyVersion>
-    <FileVersion>1.2.0.0</FileVersion>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
     <Description>Read UE pak files and its' included assets.</Description>
-    <PackageLicenseUrl>https://licenses.nuget.org/MIT</PackageLicenseUrl>
-    <Version>1.2.0</Version>
+    <PackageLicenseUrl></PackageLicenseUrl>
+    <Version>2.0.0</Version>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReleaseNotes>Completely rewritten and refactored the pak reader</PackageReleaseNotes>
   </PropertyGroup>
 </Project>

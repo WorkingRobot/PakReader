@@ -1,58 +1,54 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Text;
 
 namespace PakReader.Parsers.Objects
 {
-    public struct FPackageFileSummary
+    public readonly struct FPackageFileSummary
     {
         const int PACKAGE_FILE_TAG = unchecked((int)0x9E2A83C1);
         const int PACKAGE_FILE_TAG_SWAPPED = unchecked((int)0xC1832A9E);
 
-        int Tag;
+        private readonly int FileVersionUE4;
+        private readonly int FileVersionLicenseeUE4;
+        private readonly FCustomVersionContainer CustomVersionContainer;
 
-        private int FileVersionUE4;
-        private int FileVersionLicenseeUE4;
-        private FCustomVersionContainer CustomVersionContainer;
+        public readonly int TotalHeaderSize;
+        public readonly EPackageFlags PackageFlags;
+        public readonly string FolderName;
+        public readonly int NameCount;
+        public readonly int NameOffset;
+        //public readonly string LocalizationId; only serialized in editor
+        public readonly int GatherableTextDataCount;
+        public readonly int GatherableTextDataOffset;
+        public readonly int ExportCount;
+        public readonly int ExportOffset;
+        public readonly int ImportCount;
+        public readonly int ImportOffset;
+        public readonly int DependsOffset;
+        public readonly int SoftPackageReferencesCount;
+        public readonly int SoftPackageReferencesOffset;
+        public readonly int SearchableNamesOffset;
+        public readonly int ThumbnailTableOffset;
+        public readonly FGuid Guid;
+        public readonly FGenerationInfo[] Generations;
+        public readonly FEngineVersion SavedByEngineVersion;
+        public readonly FEngineVersion CompatibleWithEngineVersion;
+        public readonly ECompressionFlags CompressionFlags;
+        public readonly uint PackageSource;
+        public readonly bool bUnversioned;
+        public readonly int AssetRegistryDataOffset;
+        public readonly long BulkDataStartOffset;
+        public readonly int WorldTileInfoDataOffset;
+        public readonly int[] ChunkIDs;
+        public readonly int PreloadDependencyCount;
+        public readonly int PreloadDependencyOffset;
 
-        public int TotalHeaderSize;
-        public EPackageFlags PackageFlags;
-        public string FolderName;
-        public int NameCount;
-        public int NameOffset;
-        //public string LocalizationId; only serialized in editor
-        public int GatherableTextDataCount;
-        public int GatherableTextDataOffset;
-        public int ExportCount;
-        public int ExportOffset;
-        public int ImportCount;
-        public int ImportOffset;
-        public int DependsOffset;
-        public int SoftPackageReferencesCount;
-        public int SoftPackageReferencesOffset;
-        public int SearchableNamesOffset;
-        public int ThumbnailTableOffset;
-        public FGuid Guid;
-        public FGenerationInfo[] Generations;
-        public FEngineVersion SavedByEngineVersion;
-        public FEngineVersion CompatibleWithEngineVersion;
-        public ECompressionFlags CompressionFlags;
-        public uint PackageSource;
-        public bool bUnversioned;
-        public int AssetRegistryDataOffset;
-        public long BulkDataStartOffset;
-        public int WorldTileInfoDataOffset;
-        public int[] ChunkIDs;
-        public int PreloadDependencyCount;
-        public int PreloadDependencyOffset;
-
-        public FPackageFileSummary(BinaryReader reader)
+        internal FPackageFileSummary(BinaryReader reader)
         {
             bUnversioned = false;
-            CustomVersionContainer = null;
+            CustomVersionContainer = default;
 
-            Tag = reader.ReadInt32();
+            var Tag = reader.ReadInt32();
             if (Tag != PACKAGE_FILE_TAG && Tag != PACKAGE_FILE_TAG_SWAPPED)
             {
                 throw new FileLoadException("Not a UE package");

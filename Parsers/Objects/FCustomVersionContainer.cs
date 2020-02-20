@@ -2,11 +2,11 @@
 
 namespace PakReader.Parsers.Objects
 {
-    public class FCustomVersionContainer
+    public readonly struct FCustomVersionContainer
     {
-        public FCustomVersion[] Versions; // actually FCustomVersionArray, but typedeffed to TArray<FCustomVersion>
+        public readonly FCustomVersion[] Versions; // actually FCustomVersionArray, but typedeffed to TArray<FCustomVersion>
 
-        public FCustomVersionContainer(BinaryReader reader)
+        internal FCustomVersionContainer(BinaryReader reader)
         {
             Versions = reader.ReadTArray(() => new FCustomVersion(reader));
         }
