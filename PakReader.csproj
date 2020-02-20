@@ -43,12 +43,12 @@
     <RepositoryUrl>https://github.com/WorkingRobot/PakReader.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>unreal engine pak parsing uasset uexp fortnite</PackageTags>
-    <AssemblyVersion>2.0.0.0</AssemblyVersion>
-    <FileVersion>2.0.0.0</FileVersion>
+    <AssemblyVersion>2.1.0.0</AssemblyVersion>
+    <FileVersion>2.1.0.0</FileVersion>
     <Description>Read UE pak files and its' included assets.</Description>
     <PackageLicenseUrl></PackageLicenseUrl>
-    <Version>2.0.0</Version>
+    <Version>2.1.1</Version>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>Completely rewritten and refactored the pak reader</PackageReleaseNotes>
+    <PackageReleaseNotes>Now supports pak v10.</PackageReleaseNotes>
   </PropertyGroup>
 </Project>

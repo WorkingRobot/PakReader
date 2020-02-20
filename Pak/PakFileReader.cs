@@ -333,7 +333,7 @@ namespace PakReader.Pak
                     if (filter == null || filter.CheckFilter(MountPoint + filename, CaseSensitive))
                     {
                         // Filename is without the MountPoint concatenated to save memory
-                        Entries[filename] = GetEntry(pakLocation, EncodedPakEntries);
+                        Entries[path] = GetEntry(pakLocation, EncodedPakEntries);
                     }
                 }
             }
