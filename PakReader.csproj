@@ -30,7 +30,7 @@
     <OutputPath>lib\</OutputPath>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
     <PackageReference Include="SkiaSharp" Version="1.68.1.1" />
   </ItemGroup>
   <PropertyGroup>
